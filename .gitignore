@@ -1,0 +1,90 @@
+# Dependencies
+node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# Testing
+/coverage
+
+# Next.js (legacy)
+/.next/
+/out/
+
+# Production builds
+/build
+/dist/
+
+# Misc OS / editor
+.DS_Store
+*.pem
+Thumbs.db
+desktop.ini
+
+# Debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+*.log
+dev.log
+dev.out.log
+server.log
+research/proofs/*.log
+
+# Secrets - NEVER COMMIT
+.env
+.env.*
+!.env.example
+.z-ai-config
+.claude
+local-*
+
+# Vercel
+.vercel
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# Database (SQLite)
+db/*.db
+db/*.db-journal
+db/*.sqlite
+db/*.sqlite-journal
+
+# Compiled output
+dist/
+
+# Agent runtime artifacts (keep folders via .gitkeep)
+research/proofs/*.tex
+research/proofs/*.pdf
+research/proofs/*.meta.json
+research/proofs/*.verifier.json
+research/theorems/*.tex
+research/theorems/*.pdf
+research/theorems/*.tags.json
+research/riemann-attempts/*.tex
+research/riemann-attempts/*.pdf
+research/riemann-attempts/*.verifier.json
+research/arxiv-cache/*
+!research/arxiv-cache/.gitkeep
+research/hypotheses/*.tex
+research/hypotheses/*.meta.json
+
+# Keep INDEX.md tracked
+!research/INDEX.md
+
+# Skills directory
+/skills/
+
+# IDE / editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

@@ -1,0 +1,16 @@
+{
+  "name": "zriemannian-agent-runtime",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --hot index.ts",
+    "start": "bun index.ts"
+  },
+  "dependencies": {
+    "socket.io": "^4.8.3",
+    "z-ai-web-dev-sdk": "^0.0.18",
+    "@prisma/client": "^6.11.1",
+    "xml2js": "^0.6.2"
+  }
+}

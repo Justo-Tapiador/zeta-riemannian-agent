@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>zRiemannian — zeta-riemannian-agent v1.0</title>
+  <meta name="description" content="Autonomous mathematical research agent focused on the Riemann Hypothesis. Built on the Artificial Junky Neuron (AJN) framework.">
+  <link rel="icon" type="image/png" href="/zr-1-small.png">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+<!-- ============ HEADER ============ -->
+<header class="app-header">
+  <div class="logo-top">
+    <img src="/zr-1-small.png" alt="zRiemannian logo">
+    <div>
+      <h1>zRiemannian <span>· zeta-riemannian-agent v1.0</span></h1>
+      <p>Autonomous mathematical research agent · Riemann Hypothesis focus · AJN backbone</p>
+    </div>
+  </div>
+  <div class="header-badges">
+    <span id="conn-badge" class="badge offline">● offline</span>
+    <span id="cycle-badge" class="badge">cycle #—</span>
+    <span id="phase-badge" class="badge phase-idle">idle</span>
+    <span id="uptime-badge" class="badge">uptime —</span>
+  </div>
+</header>
+
+<!-- ============ RIEMANN ALERT BANNER (hidden by default) ============ -->
+<div id="riemann-alert" class="riemann-alert" style="display:none;">
+  <div class="alert-icon">⚠</div>
+  <div class="alert-content">
+    <div class="alert-title">*** RIEMANN HYPOTHESIS PROVEN ***</div>
+    <div class="alert-body" id="alert-body">
+      zRiemannian has produced a verifier-accepted proof of the Riemann Hypothesis.
+      All autonomous hypothesis creation has been halted. The LaTeX source and PDF
+      are archived under <code>research/riemann-attempts/</code>. Please review immediately.
+    </div>
+  </div>
+  <button class="primary" onclick="switchTab('riemann')">View the proof</button>
+</div>
+
+<!-- ============ MAIN ============ -->
+<main>
+
+  <!-- Tabs -->
+  <nav class="tabs">
+    <button class="tab active" data-tab="overview"><span class="tab-icon">✦</span>Overview</button>
+    <button class="tab" data-tab="activity"><span class="tab-icon">⚡</span>Activity</button>
+    <button class="tab" data-tab="hypotheses"><span class="tab-icon">💡</span>Hypotheses</button>
+    <button class="tab" data-tab="theorems"><span class="tab-icon">📚</span>Theorems</button>
+    <button class="tab" data-tab="riemann"><span class="tab-icon">🎯</span>Riemann</button>
+    <button class="tab" data-tab="arxiv"><span class="tab-icon">📄</span>ArXiv</button>
+    <button class="tab" data-tab="kg"><span class="tab-icon">🕸</span>Knowledge</button>
+    <button class="tab" data-tab="guidance"><span class="tab-icon">🧠</span>Guidance</button>
+    <button class="tab" data-tab="backbone"><span class="tab-icon">⚡</span>AJN</button>
+  </nav>
+
+  <!-- OVERVIEW -->
+  <section id="tab-overview" class="tab-panel active">
+    <div class="stat-grid">
+      <div class="stat-card cyan"><div class="stat-label">Cycles <span class="stat-icon">⚡</span></div><div class="stat-value" id="stat-cycles">0</div></div>
+      <div class="stat-card amber"><div class="stat-label">Hypotheses <span class="stat-icon">💡</span></div><div class="stat-value" id="stat-hypotheses">0</div></div>
+      <div class="stat-card emerald"><div class="stat-label">Theorems <span class="stat-icon">📚</span></div><div class="stat-value" id="stat-theorems">0</div></div>
+      <div class="stat-card rose"><div class="stat-label">Riemann attempts <span class="stat-icon">🎯</span></div><div class="stat-value" id="stat-riemann">0</div></div>
+      <div class="stat-card blue"><div class="stat-label">ArXiv cached <span class="stat-icon">📄</span></div><div class="stat-value" id="stat-arxiv">0</div></div>
+      <div class="stat-card violet"><div class="stat-label">Current focus <span class="stat-icon">🎯</span></div><div class="stat-value" id="stat-focus" style="font-size:14px;">(none — autonomous)</div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">🧪 Mission statement</div>
+      <div class="card-body mission">
+        <p><strong>zRiemannian</strong> is an autonomous mathematical research agent built on the <strong>Artificial Junky Neuron (AJN)</strong> framework inherited from <em>predator-jungle-agent</em> via <em>quantum-spherifier</em>. Upon launch it immediately begins producing mathematical hypotheses related to the <strong>Riemann Hypothesis</strong>, attempts to prove them, archives successful proofs as reusable theorems, and periodically attempts a full proof of the Riemann Hypothesis itself.</p>
+        <p>Each cycle of the agent passes through a 14-layer ANN-Psi backbone (Hybrid AJN, Hetero AJN K=8/16/32, Transformer) and is dispatched to a task-routed multi-LLM ensemble (Z.ai GLM-4.6 primary, with optional OpenAI / Anthropic / Gemini / DeepSeek failover). LaTeX documents are written to a hierarchical local archive under <code>research/</code> and compiled to PDF via <code>tectonic</code> when available.</p>
+        <p>When — and only when — a Riemann attempt passes a strict adversarial verifier with confidence ≥ 0.90, the agent enters <strong class="alert-strong">RIEMANN-PROVEN MODE</strong>: hypothesis creation halts, the LaTeX + PDF are sealed under <code>research/riemann-attempts/</code>, and the red banner above begins to pulse until the human owner acknowledges.</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">💾 LLM providers</div>
+      <div class="card-body">
+        <div id="providers-list" class="provider-grid">
+          <p class="text-dim">Loading…</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ACTIVITY -->
+  <section id="tab-activity" class="tab-panel">
+    <div class="card">
+      <div class="card-header">⚡ Live event stream</div>
+      <div class="card-body">
+        <div id="activity-feed" class="activity-feed">
+          <p class="text-dim">No events yet — the agent should emit some within seconds.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- HYPOTHESES -->
+  <section id="tab-hypotheses" class="tab-panel">
+    <div class="card">
+      <div class="card-header">💡 Hypotheses archive (<span id="hypotheses-count">0</span>)</div>
+      <div class="card-body">
+        <div id="hypotheses-list" class="item-list">
+          <p class="empty-state">No hypotheses yet. The agent will produce them every other cycle.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- THEOREMS -->
+  <section id="tab-theorems" class="tab-panel">
+    <div class="card">
+      <div class="card-header">📚 Theorem toolkit (<span id="theorems-count">0</span>)</div>
+      <div class="card-body">
+        <div id="theorems-list" class="item-list">
+          <div class="card" style="background:rgba(59,130,246,0.05); border-color:rgba(59,130,246,0.3);">
+            <div class="card-body">
+              <strong>No theorems yet</strong>
+              <p class="text-dim text-sm mt-2">The agent will promote a hypothesis to a theorem once a proof attempt passes the verifier with confidence ≥ 0.75. This is rare by design — most proofs will be rejected.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- RIEMANN -->
+  <section id="tab-riemann" class="tab-panel">
+    <div class="card">
+      <div class="card-header">🎯 Riemann Hypothesis attempts (<span id="riemann-count">0</span>)</div>
+      <div class="card-body">
+        <div id="riemann-list" class="item-list">
+          <p class="empty-state">No Riemann attempts yet. The agent runs one every 5 cycles. Send a <strong>Force Riemann attempt</strong> directive from the Guidance tab to trigger one immediately.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ARXIV -->
+  <section id="tab-arxiv" class="tab-panel">
+    <div class="card">
+      <div class="card-header">📄 ArXiv cache (<span id="arxiv-count">0</span>)</div>
+      <div class="card-body">
+        <div id="arxiv-list" class="item-list">
+          <p class="empty-state">No ArXiv papers cached yet. The agent scans ArXiv every 3 cycles.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- KNOWLEDGE GRAPH -->
+  <section id="tab-kg" class="tab-panel">
+    <div class="kg-grid">
+      <div class="card">
+        <div class="card-header">🕸 Nodes (<span id="kg-nodes-count">0</span>)</div>
+        <div class="card-body">
+          <div id="kg-nodes-list" class="item-list" style="max-height:600px;"></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">🕸 Edges (<span id="kg-edges-count">0</span>)</div>
+        <div class="card-body">
+          <div id="kg-edges-list" class="item-list" style="max-height:600px;"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- GUIDANCE -->
+  <section id="tab-guidance" class="tab-panel">
+    <div class="guidance-grid">
+      <div class="card">
+        <div class="card-header">🧠 Agent control</div>
+        <div class="card-body">
+          <div class="form-group">
+            <label>Set focus topic</label>
+            <div class="form-row">
+              <input id="focus-input" type="text" placeholder="e.g. 'Hilbert–Pólya operator construction'">
+              <button onclick="sendDirective({kind:'set-focus', focus: document.getElementById('focus-input').value})">Set</button>
+            </div>
+            <p class="text-dim text-sm mt-2">Bias hypothesis generation toward this topic. Empty = fully autonomous.</p>
+          </div>
+          <hr style="border-color: var(--border); margin: 12px 0;">
+          <div class="button-row">
+            <button id="halt-btn" class="danger" onclick="sendDirective({kind:'halt'})">⏸ Halt</button>
+            <button id="resume-btn" class="success" onclick="sendDirective({kind:'resume'})">▶ Resume</button>
+            <button class="primary" onclick="sendDirective({kind:'force-riemann-attempt'})">🎯 Force Riemann attempt</button>
+            <button class="ghost" onclick="sendDirective({kind:'rerun-cycle'})">🔄 Rerun cycle</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">💡 Inject hypothesis</div>
+        <div class="card-body">
+          <div class="form-group">
+            <label>Title</label>
+            <input id="inject-title" type="text" placeholder="Title">
+          </div>
+          <div class="form-group">
+            <label>Statement (LaTeX allowed)</label>
+            <textarea id="inject-statement" placeholder="e.g. $\zeta(s)$ has all non-trivial zeros on Re(s)=1/2"></textarea>
+          </div>
+          <div class="form-group">
+            <label>Motivation (2-4 sentences)</label>
+            <textarea id="inject-motivation" placeholder="Why this hypothesis matters for RH"></textarea>
+          </div>
+          <button class="primary" style="width:100%;" onclick="injectHypothesis()">📤 Inject hypothesis</button>
+          <p class="text-dim text-sm mt-2">The injected hypothesis bypasses LLM generation and is immediately available for proof attempts on the next cycle.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- AJN BACKBONE -->
+  <section id="tab-backbone" class="tab-panel">
+    <div class="card">
+      <div class="card-header">⚡ ANN-Psi backbone (14 layers, AJN + Transformer)</div>
+      <div class="card-body">
+        <p class="text-dim text-sm" style="margin-bottom: 16px;">
+          Lineage: <code>predator-jungle-agent v2.0</code> → <code>fusionary-agent</code> → <code>quantum-spherifier</code> → <code>zeta-riemannian-agent v1.0</code>.
+          The Artificial Junky Neuron (AJN) is the defining primitive: an AJN neuron fires autonomously on launch — it does NOT wait for an external request.
+        </p>
+        <div id="backbone-grid" class="backbone-grid"></div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- ============ FOOTER ============ -->
+<footer class="app-footer">
+  <div class="footer-logo">
+    <img src="/zr-2-small.png" alt="zRiemannian footer logo">
+  </div>
+  <div class="footer-info">
+    <span>zRiemannian v1.0 · MIT License · Universidad de Alicante (lineage: predator-jungle-agent → fusionary → quantum-spherifier → zeta-riemannian-agent)</span>
+    <span>Node.js native · Socket.io · tectonic</span>
+  </div>
+</footer>
+
+<!-- Toast -->
+<div id="toast" class="toast">
+  <div class="toast-title" id="toast-title"></div>
+  <div class="toast-desc" id="toast-desc"></div>
+</div>
+
+<!-- ============ JavaScript ============ -->
+<script src="/socket.io/socket.io.js"></script>
+<script src="/js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,519 @@
+// zeta-riemannian-agent v1.0 — Orchestrator
+//
+// The main autonomous loop. On startup it immediately begins cycling
+// (the AJN "addiction" property — it does NOT wait for an owner request).
+// Each cycle picks a phase according to the policy below, executes it
+// through the 14-layer backbone, and emits structured events.
+//
+// Phase policy (per cycle, modulated by owner directives):
+//   every 5th cycle  -> riemann-attempt   (the central RH probe)
+//   every 3rd cycle  -> arxiv-scan        (refresh the preprint cache)
+//   otherwise        -> alternates between hypothesis-gen and proof-attempt,
+//                       with an archive pass every 7th cycle.
+//
+// When the agent is halted (owner directive or RH-proven), the loop
+// pauses but the runtime stays alive so the owner can still interact.
+
+import { db } from '@/lib/db';
+import llmRouter from './llm-router';
+import { emit, log, recentEvents } from './logger';
+import {
+  BACKBONE_LAYERS,
+  initialContext,
+  fireLayer,
+  backboneSelfCheck,
+  type ContextVector,
+} from './ajn-backbone';
+import { seedKnowledgeGraph, listNodes, listEdges } from './knowledge-graph';
+import {
+  searchArxiv,
+  cacheArxivHit,
+  listCachedPapers,
+  pickRhQuery,
+  attachSummary,
+} from './arxiv-adapter';
+import { generateHypothesis, pickOpenHypothesis, listHypotheses } from './hypothesis-generator';
+import { attemptProof } from './proof-attempter';
+import { verifyProof, PROMOTION_THRESHOLD } from './proof-verifier';
+import { promoteToTheorem, toolkitSummary, listTheorems } from './theorem-archivist';
+import { attemptRiemannProof, listRiemannAttempts } from './riemann-prober';
+import type { AgentEvent, AgentPhase, AgentSnapshot, OwnerDirectivePayload } from './types';
+import { ensureDirs, writeTex, writeSidecar, hypothesisTex, makeShortCode, rel } from './document-archivist';
+import fs from 'fs';
+import path from 'path';
+
+const CYCLE_INTERVAL_MS = 60_000; // 1 minute between cycles when no owner is forcing
+const RIEMANN_EVERY_N_CYCLES = 5;
+const ARXIV_EVERY_N_CYCLES = 3;
+const ARCHIVE_EVERY_N_CYCLES = 7;
+
+export type EventListener = (ev: AgentEvent) => void;
+
+class Orchestrator {
+  private listeners = new Set<EventListener>();
+  private timer: NodeJS.Timeout | null = null;
+  private startedAt = Date.now();
+  private currentCycleId = 0;
+  private currentPhase: AgentPhase = 'idle';
+  private isHalted = false;
+  private riemannProven = false;
+  private focusTopic: string | null = null;
+  private ownerDirectiveQueue: OwnerDirectivePayload[] = [];
+  private cycling = false;
+
+  async start() {
+    ensureDirs();
+    await llmRouter.init();
+    backboneSelfCheck();
+    await this.ensureAgentState();
+    await seedKnowledgeGraph();
+    this.hookLogger();
+    log.info('zRiemannian orchestrator starting — AJN addiction engaged');
+    emit('log', 'zRiemannian launched — autonomous research begins NOW', {
+      level: 'info',
+    });
+    // Fire the first cycle immediately (AJN addiction — no waiting).
+    this.scheduleCycle(0);
+  }
+
+  async stop() {
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    log.info('zRiemannian orchestrator stopped');
+  }
+
+  addListener(l: EventListener) {
+    this.listeners.add(l);
+    return () => this.listeners.delete(l);
+  }
+
+  private hookLogger() {
+    // The logger.emit function already pushes to a ring; subscribers poll it
+    // via the WebSocket mini-service. Nothing to do here.
+  }
+
+  private async ensureAgentState() {
+    const existing = await db.agentState.findUnique({ where: { id: 1 } });
+    if (!existing) {
+      await db.agentState.create({ data: { id: 1, isRunning: true, isHalted: false } });
+    } else {
+      this.isHalted = existing.isHalted;
+      this.riemannProven = existing.riemannProven;
+      this.focusTopic = existing.focusTopic;
+    }
+  }
+
+  private scheduleCycle(delayMs: number) {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => {
+      this.runCycle().catch((e) => {
+        emit('error', `cycle crashed: ${e?.message ?? e}`, { level: 'error' });
+        this.scheduleCycle(CYCLE_INTERVAL_MS);
+      });
+    }, delayMs);
+  }
+
+  private async runCycle() {
+    if (this.riemannProven) {
+      // RH-proven mode: keep broadcasting the alert, do nothing else.
+      emit(
+        'riemann-proven',
+        '*** RIEMANN HYPOTHESIS HAS BEEN PROVEN — agent is in alert-only mode ***',
+        { level: 'critical' }
+      );
+      this.scheduleCycle(15_000); // re-broadcast every 15s
+      return;
+    }
+    if (this.isHalted) {
+      emit('log', 'agent is halted by owner — skipping cycle', { level: 'info' });
+      this.scheduleCycle(CYCLE_INTERVAL_MS);
+      return;
+    }
+
+    // Apply queued owner directives first.
+    await this.applyQueuedDirectives();
+
+    this.currentCycleId++;
+    const cycleId = this.currentCycleId;
+    const phase = this.pickPhase(cycleId);
+    this.currentPhase = phase;
+
+    const cycle = await db.agentCycle.create({
+      data: { startedAt: new Date(), phase, status: 'running' },
+    });
+    await db.agentState.update({
+      where: { id: 1 },
+      data: { currentCycleId: cycle.id, totalCycles: { increment: 1 } },
+    });
+
+    emit('cycle-start', `cycle #${cycleId} phase=${phase}`, {
+      cycleId,
+      phase,
+      payload: { cycleId, phase },
+    });
+    emit('phase-change', `phase -> ${phase}`, { cycleId, phase });
+
+    const ctx = initialContext(cycleId, phase);
+
+    try {
+      // Always fire layers 1-2 (sensory intake).
+      await fireLayer(ctx, BACKBONE_LAYERS[0]);
+      await fireLayer(ctx, BACKBONE_LAYERS[1]);
+
+      // Populate context with KG activations + recent ArXiv digests.
+      const kgNodes = await listNodes(20);
+      ctx.kgActivations = kgNodes.map((n) => ({ label: n.label, activation: 1 }));
+      const cached = await listCachedPapers(8);
+      ctx.arxivDigests = cached.map((p) => ({
+        id: p.arxivId,
+        title: p.title,
+        relevance: p.relevanceScore,
+      }));
+      await fireLayer(ctx, BACKBONE_LAYERS[2]); // Pattern-8
+
+      switch (phase) {
+        case 'arxiv-scan':
+          await this.phaseArxivScan(ctx);
+          break;
+        case 'hypothesis-gen':
+          await this.phaseHypothesisGen(ctx);
+          break;
+        case 'proof-attempt':
+          await this.phaseProofAttempt(ctx);
+          break;
+        case 'riemann-attempt':
+          await this.phaseRiemannAttempt(ctx);
+          break;
+        case 'archive':
+          await this.phaseArchive(ctx);
+          break;
+        case 'idle':
+        default:
+          emit('log', 'idle phase — no-op', { cycleId, phase });
+          break;
+      }
+
+      // Fire the rest of the backbone symbolically (layers 4-14) to mirror
+      // the predator-jungle-agent convention.
+      for (let i = 3; i < BACKBONE_LAYERS.length; i++) {
+        await fireLayer(ctx, BACKBONE_LAYERS[i]);
+      }
+
+      await db.agentCycle.update({
+        where: { id: cycle.id },
+        data: { endedAt: new Date(), status: 'ok' },
+      });
+      emit('cycle-end', `cycle #${cycleId} ok`, { cycleId, phase });
+    } catch (e: any) {
+      await db.agentCycle.update({
+        where: { id: cycle.id },
+        data: { endedAt: new Date(), status: 'error', error: e?.message ?? String(e) },
+      });
+      emit('error', `cycle #${cycleId} failed: ${e?.message ?? e}`, {
+        cycleId,
+        phase,
+        level: 'error',
+      });
+    }
+
+    this.currentPhase = 'idle';
+    this.scheduleCycle(CYCLE_INTERVAL_MS);
+  }
+
+  private pickPhase(cycleId: number): AgentPhase {
+    if (cycleId % RIEMANN_EVERY_N_CYCLES === 0) return 'riemann-attempt';
+    if (cycleId % ARXIV_EVERY_N_CYCLES === 0) return 'arxiv-scan';
+    if (cycleId % ARCHIVE_EVERY_N_CYCLES === 0) return 'archive';
+    return cycleId % 2 === 0 ? 'hypothesis-gen' : 'proof-attempt';
+  }
+
+  // ----- Phases -----
+
+  private async phaseArxivScan(ctx: ContextVector) {
+    const query = this.focusTopic ?? pickRhQuery();
+    const hits = await searchArxiv(query, { max: 5, sortBy: 'relevance' });
+    emit('arxiv-fetched', `ArXiv scan returned ${hits.length} hits for "${query}"`, {
+      cycleId: ctx.cycleId,
+      phase: ctx.phase,
+      payload: { query, count: hits.length },
+    });
+    for (const hit of hits) {
+      // Compute a simple relevance score: 0.5 baseline, +0.3 if title mentions
+      // 'Riemann' or 'zeta', +0.2 if abstract mentions 'critical line'.
+      const title = hit.title.toLowerCase();
+      const abs = hit.abstract.toLowerCase();
+      let rel = 0.5;
+      if (title.includes('riemann') || title.includes('zeta')) rel += 0.3;
+      if (abs.includes('critical line') || abs.includes('re(s) = 1/2')) rel += 0.2;
+      rel = Math.min(1, rel);
+      const cached = await cacheArxivHit(hit, rel);
+      // Optionally attach a summary via the LLM.
+      try {
+        const sumRes = await llmRouter.call({
+          task: 'arxiv-summarise',
+          systemPrompt:
+            'You are zRiemannian. Summarise the given ArXiv abstract in 2-3 sentences, emphasising its relevance to the Riemann Hypothesis.',
+          userPrompt: `Title: ${hit.title}\nAbstract: ${hit.abstract}`,
+          temperature: 0.3,
+          maxTokens: 300,
+        });
+        await attachSummary(cached.arxivId, sumRes.text, rel);
+      } catch (e: any) {
+        emit('error', `arxiv summarise failed for ${hit.arxivId}: ${e.message}`, {
+          level: 'warn',
+        });
+      }
+      await db.agentState.update({
+        where: { id: 1 },
+        data: { totalArxivPapers: { increment: 1 } },
+      });
+    }
+  }
+
+  private async phaseHypothesisGen(ctx: ContextVector) {
+    const { shortCode, dbId } = await generateHypothesis({
+      focusTopic: this.focusTopic,
+      recentArxivDigests: ctx.arxivDigests,
+      kgActivations: ctx.kgActivations,
+      cycleId: ctx.cycleId,
+    });
+    await db.agentState.update({
+      where: { id: 1 },
+      data: { totalHypotheses: { increment: 1 } },
+    });
+    void shortCode;
+    void dbId;
+  }
+
+  private async phaseProofAttempt(ctx: ContextVector) {
+    const target = await pickOpenHypothesis();
+    if (!target) {
+      emit('log', 'no open hypothesis to prove — generating one first', {
+        cycleId: ctx.cycleId,
+        phase: ctx.phase,
+      });
+      await this.phaseHypothesisGen(ctx);
+      return;
+    }
+    const toolkit = await toolkitSummary(12);
+    const arxivRefs = (await listCachedPapers(8)).map((p) => ({
+      arxivId: p.arxivId,
+      title: p.title,
+    }));
+    const { dbId } = await attemptProof({
+      hypothesis: target,
+      toolkit,
+      arxivRefs,
+      cycleId: ctx.cycleId,
+    });
+    // Verify the proof.
+    const attempt = await db.proofAttempt.findUnique({
+      where: { id: dbId },
+      include: { hypothesis: true },
+    });
+    if (!attempt) return;
+    const report = await verifyProof({
+      proofAttemptId: attempt.id,
+      shortCode: attempt.shortCode,
+      hypothesisShortCode: attempt.hypothesis.shortCode,
+      hypothesisStatement: attempt.hypothesis.statement,
+      proofBody: attempt.texSource,
+      cycleId: ctx.cycleId,
+    });
+    if (report.verdict === 'valid' && report.confidence >= PROMOTION_THRESHOLD) {
+      await promoteToTheorem({
+        hypothesisId: attempt.hypothesisId,
+        proofAttemptId: attempt.id,
+        cycleId: ctx.cycleId,
+      });
+      await db.agentState.update({
+        where: { id: 1 },
+        data: { totalTheorems: { increment: 1 } },
+      });
+    }
+  }
+
+  private async phaseRiemannAttempt(ctx: ContextVector) {
+    const toolkit = await toolkitSummary(16);
+    const arxivRefs = (await listCachedPapers(10)).map((p) => ({
+      arxivId: p.arxivId,
+      title: p.title,
+    }));
+    const { proven } = await attemptRiemannProof({
+      toolkit,
+      arxivRefs,
+      cycleId: ctx.cycleId,
+    });
+    if (proven) {
+      this.riemannProven = true;
+      this.isHalted = true;
+    }
+  }
+
+  private async phaseArchive(ctx: ContextVector) {
+    // Regenerate INDEX.md with the current state of research/.
+    const root = path.join(process.cwd(), 'research');
+    const indexPath = path.join(root, 'INDEX.md');
+    const hyps = await listHypotheses(50);
+    const thms = await listTheorems(50);
+    const rhs = await listRiemannAttempts(50);
+    const arxiv = await listCachedPapers(50);
+
+    const lines: string[] = [];
+    lines.push('# zRiemannian research archive — INDEX\n');
+    lines.push(`Auto-regenerated by the archive phase at ${new Date().toISOString()}.\n`);
+    lines.push('\n## Hypotheses\n');
+    for (const h of hyps) {
+      lines.push(`- **${h.shortCode}** (${h.status}, conf=${h.confidence.toFixed(2)}): ${h.title}`);
+    }
+    lines.push('\n## Theorems\n');
+    for (const t of thms) {
+      lines.push(`- **${t.shortCode}**: ${t.title}`);
+    }
+    lines.push('\n## Riemann attempts\n');
+    for (const r of rhs) {
+      lines.push(
+        `- **${r.shortCode}** (${r.verdict}, conf=${r.verifierConfidence.toFixed(2)}): ${r.strategy}`
+      );
+    }
+    lines.push('\n## ArXiv cache\n');
+    for (const a of arxiv) {
+      lines.push(`- arXiv:${a.arxivId} (rel=${a.relevanceScore.toFixed(2)}): ${a.title}`);
+    }
+    fs.writeFileSync(indexPath, lines.join('\n'), 'utf8');
+    emit('doc-written', `regenerated ${path.relative(process.cwd(), indexPath)}`, {
+      cycleId: ctx.cycleId,
+      phase: ctx.phase,
+    });
+  }
+
+  // ----- Owner directives -----
+
+  enqueueDirective(d: OwnerDirectivePayload) {
+    this.ownerDirectiveQueue.push(d);
+    emit('log', `owner directive queued: ${d.kind}`, { payload: d });
+  }
+
+  private async applyQueuedDirectives() {
+    while (this.ownerDirectiveQueue.length > 0) {
+      const d = this.ownerDirectiveQueue.shift()!;
+      await this.applyDirective(d);
+    }
+  }
+
+  private async applyDirective(d: OwnerDirectivePayload) {
+    switch (d.kind) {
+      case 'set-focus':
+        this.focusTopic = d.focus ?? null;
+        await db.agentState.update({
+          where: { id: 1 },
+          data: { focusTopic: this.focusTopic },
+        });
+        emit('owner-directive-applied', `focus set to "${this.focusTopic}"`, {
+          payload: { kind: d.kind, focus: this.focusTopic },
+        });
+        break;
+      case 'halt':
+        this.isHalted = true;
+        await db.agentState.update({ where: { id: 1 }, data: { isHalted: true } });
+        emit('owner-directive-applied', 'agent HALTED by owner', { payload: { kind: d.kind } });
+        break;
+      case 'resume':
+        this.isHalted = false;
+        await db.agentState.update({ where: { id: 1 }, data: { isHalted: false } });
+        emit('owner-directive-applied', 'agent RESUMED by owner', { payload: { kind: d.kind } });
+        break;
+      case 'force-riemann-attempt':
+        emit('owner-directive-applied', 'owner forcing a Riemann attempt', {
+          payload: { kind: d.kind },
+        });
+        // Run the Riemann attempt synchronously outside the normal cycle.
+        const ctx = initialContext(this.currentCycleId + 1, 'riemann-attempt');
+        await this.phaseRiemannAttempt(ctx);
+        break;
+      case 'inject-hypothesis':
+        if (d.hypothesisDraft) {
+          // Persist directly without LLM generation.
+          const seq = (await db.hypothesis.count()) + 1;
+          const shortCode = makeShortCode('H', seq);
+          const tex = hypothesisTex({
+            shortCode,
+            title: d.hypothesisDraft.title,
+            statement: d.hypothesisDraft.statement,
+            motivation: d.hypothesisDraft.motivation,
+            strategySketch: d.hypothesisDraft.strategySketch,
+            relatedConcepts: d.hypothesisDraft.relatedConcepts,
+            relatedArxivIds: d.hypothesisDraft.relatedArxivIds,
+            confidence: d.hypothesisDraft.confidence,
+          });
+          const texAbs = writeTex('hypotheses', `${shortCode}.tex`, tex);
+          writeSidecar('hypotheses', `${shortCode}.meta.json`, {
+            shortCode,
+            draft: d.hypothesisDraft,
+            injectedByOwner: true,
+            generatedAt: new Date().toISOString(),
+          });
+          await db.hypothesis.create({
+            data: {
+              shortCode,
+              title: d.hypothesisDraft.title,
+              statement: d.hypothesisDraft.statement,
+              motivation: d.hypothesisDraft.motivation,
+              strategySketch: d.hypothesisDraft.strategySketch,
+              relatedConcepts: JSON.stringify(d.hypothesisDraft.relatedConcepts),
+              relatedArxivIds: JSON.stringify(d.hypothesisDraft.relatedArxivIds),
+              confidence: d.hypothesisDraft.confidence,
+              status: 'open',
+            },
+          });
+          await db.agentState.update({
+            where: { id: 1 },
+            data: { totalHypotheses: { increment: 1 } },
+          });
+          emit('owner-directive-applied', `injected hypothesis ${shortCode}`, {
+            payload: { kind: d.kind, shortCode, texPath: rel(texAbs) },
+          });
+        }
+        break;
+      case 'shutdown':
+        await this.stop();
+        emit('owner-directive-applied', 'agent SHUTDOWN by owner', { payload: { kind: d.kind } });
+        break;
+      default:
+        emit('owner-directive-rejected', `unknown directive kind: ${d.kind}`, {
+          payload: { kind: d.kind },
+        });
+    }
+  }
+
+  async snapshot(): Promise<AgentSnapshot> {
+    const state = await db.agentState.findUnique({ where: { id: 1 } });
+    const cycles = await db.agentCycle.count();
+    const hyps = await db.hypothesis.count();
+    const thms = await db.theorem.count();
+    const arxiv = await db.arxivPaper.count();
+    const rh = await db.riemannAttempt.count();
+    const last = (recentEvents(1) as AgentEvent[])[0] ?? null;
+    return {
+      isRunning: !!this.timer,
+      isHalted: this.isHalted,
+      riemannProven: this.riemannProven,
+      riemannProvenAt: state?.riemannProvenAt?.toISOString() ?? null,
+      currentCycleId: this.currentCycleId || state?.currentCycleId || null,
+      currentPhase: this.currentPhase,
+      totalCycles: cycles,
+      totalHypotheses: hyps,
+      totalTheorems: thms,
+      totalArxivPapers: arxiv,
+      totalRiemannAttempts: rh,
+      focusTopic: this.focusTopic,
+      lastEvent: last,
+      uptimeMs: Date.now() - this.startedAt,
+    };
+  }
+}
+
+const orchestrator = new Orchestrator();
+export default orchestrator;

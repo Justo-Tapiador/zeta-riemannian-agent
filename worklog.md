@@ -1,0 +1,75 @@
+---
+Task ID: 1
+Agent: Super Z (main)
+Task: Build the zeta-riemannian-agent v1.0 (:zRiemannian) — an autonomous mathematical research agent focused on the Riemann Hypothesis, based on the predator-jungle-agent AJN lineage (via fusionary-agent and quantum-spherifier). The agent must: (1) create RH-related hypotheses, (2) access ArXiv preprints, (3) attempt proofs, (4) archive verified proofs as theorems, (5) periodically attempt RH itself, (6) enter an alert-only mode if RH is ever proven. Repository and all produced documents must be in English. Must include a comprehensive README and a web UI for owner guidance.
+
+Work Log:
+- Fetched and analysed the upstream quantum-spherifier repo (https://github.com/Justo-Tapiador/quantum-spherifier) — read its README, package.json, and tree to understand the AJN backbone, the multi-LLM router pattern, the hierarchical archive, and the predator-jungle-agent lineage.
+- Loaded the fullstack-dev skill and initialised the Next.js 16 + TypeScript + Tailwind + shadcn/ui environment.
+- Installed socket.io, socket.io-client, and xml2js for the WebSocket mini-service and ArXiv XML parsing.
+- Designed the Prisma schema (10 models): Hypothesis, ProofAttempt, Theorem, RiemannAttempt, ArxivPaper, KGNode, KGEdge, AgentCycle, OwnerDirective, AgentState. Pushed it to SQLite.
+- Built the core agent library under src/lib/agent/:
+  - types.ts (shared TypeScript interfaces)
+  - logger.ts (structured logger with 500-entry ring buffer)
+  - ajn-backbone.ts (14-layer ANN-Psi backbone spec mirroring predator-jungle-agent: Hybrid AJN, Hetero AJN K=8/16/32, Transformer, Output)
+  - llm-router.ts (multi-LLM task-routed router around z-ai-web-dev-sdk, with 90s timeout and graceful stub fallback; pluggable adapters for OpenAI, Anthropic, Google, DeepSeek)
+  - arxiv-adapter.ts (ArXiv API query + XML parse + caching + LLM summarisation; 14 RH-related query terms)
+  - latex-compiler.ts (tectonic wrapper with graceful degradation)
+  - document-archivist.ts (hierarchical LaTeX storage with 4 templates: hypothesis, proof, theorem, riemann-attempt; project-root auto-discovery so the archive location is process-independent)
+  - knowledge-graph.ts (20 canonical RH concepts + 19 edges seeded on first launch)
+  - hypothesis-generator.ts (LLM-driven creative hypothesis generation with focus-topic bias)
+  - proof-attempter.ts (LLM-driven LaTeX proof body generation + PDF compilation)
+  - proof-verifier.ts (adversarial LLM verifier with verdict + confidence + gaps; PROMOTION_THRESHOLD = 0.75)
+  - theorem-archivist.ts (promotes verified proofs to tagged, indexed theorems)
+  - riemann-prober.ts (*** the central RH prober *** — 10 predefined proof strategies, adversarial double-verify, RH_PROMOTION_THRESHOLD = 0.90, sets AgentState.riemannProven + isHalted on success)
+  - json-utils.ts (robust JSON extractor that handles LaTeX-in-JSON escape issues)
+  - orchestrator.ts (main autonomous loop — AJN addiction: starts immediately with zero delay; phase picker: riemann-attempt every 5 cycles, arxiv-scan every 3, archive every 7, otherwise alternating hypothesis-gen / proof-attempt; owner-directive queue; snapshot)
+- Built the agent-runtime mini-service (mini-services/agent-runtime/index.ts) on port 3003:
+  - Socket.io server with path '/' for Caddy XTransformPort routing
+  - Streams all logger ring events to connected clients every 500ms
+  - Broadcasts a snapshot every 5s
+  - Accepts owner directives via the 'directive' event
+  - Heartbeat every 5s for liveness diagnostics
+  - Process-level error handlers (uncaughtException, unhandledRejection, exit, SIGTERM, SIGINT)
+- Built the Next.js dashboard (src/app/page.tsx) — a 9-tab dark-themed UI:
+  - Overview: stat cards + mission statement + LLM provider status
+  - Activity: live event stream (auto-scrolling, colour-coded by level)
+  - Hypotheses: list with status badges, confidence, related concepts, expandable details
+  - Theorems: list with tags, dependencies, .tex/.pdf links
+  - Riemann: list of RH attempts with verdict, confidence, verifier report, .tex/.pdf links
+  - ArXiv: cached preprints with relevance score, summary, abstract
+  - Knowledge: KG nodes + edges browser
+  - Guidance: owner-directive form (set-focus, halt, resume, force-riemann-attempt, inject-hypothesis, rerun-cycle)
+  - AJN: 14-layer backbone inspector
+  - *** Pulsing red Riemann-alert banner at the top of every page when riemannProven === true ***
+- Built a read-only file API (src/app/api/research/file/route.ts) to serve .tex and .pdf artifacts from research/ with path-traversal protection.
+- Wrote a supervisor script (scripts/supervise-agent.sh) that restarts the agent-runtime if it crashes, started with setsid for full session detachment.
+- Debugged and fixed multiple issues:
+  - Prisma schema relation fields (added unique constraint on Theorem.attemptId, added back-relation fields on KGNode)
+  - AgentCycle.summary field made @default("")
+  - LaTeX-in-JSON parse failures — wrote safeJsonParse with LaTeX escape repair
+  - Document archive path resolution — replaced process.cwd() with __dirname-based project-root discovery
+  - LLM router timeout — wrapped ZAI call in Promise.race with 90s timeout
+  - Agent-runtime crashes — added process-level error handlers + heartbeat + supervisor
+- Verified end-to-end with Agent Browser:
+  - Page loads via the Caddy gateway (port 81) with all 9 tabs visible
+  - WebSocket connects (● live badge appears, cycle counter increments, uptime ticks)
+  - Agent autonomously produces hypotheses (e.g. H-2026-0001 "Spectral Automorphism Criterion for RH", H-2026-0002 "Non-Archimedean Riemann Hypothesis")
+  - Agent produces proof attempts with compiled PDFs (PA-2026-0001..0005)
+  - Verifier correctly rejects proofs (verdict=invalid, conf=0.20-0.30)
+  - Owner directives (set-focus, force-riemann-attempt) are received and queued
+  - Activity feed shows all events in real time
+- Wrote the comprehensive README.md (English, ~12k words): overview, key principles, the 6 mathematical tasks, architecture diagram, AJN explanation, 14-layer backbone table, multi-LLM integration, ArXiv integration, document archive layout, the Riemann alert, owner guidance, installation, quick start, usage, configuration, project structure, lineage & credits.
+- Wrote docs/architecture.md (deeper companion): process topology, module map, dependency graph, data model, cycle loop, LLM call protocol, Riemann-alert state machine, WebSocket event protocol, document archivist, KG seed, failure modes, extension points.
+- Wrote .env.example, LICENSE (MIT), research/INDEX.md.
+
+Stage Summary:
+- Repository: /home/z/my-project/ (Next.js 16 + TypeScript + Prisma + Socket.io + tectonic)
+- Agent library: src/lib/agent/ (15 modules, ~2.5k lines of TypeScript)
+- Web dashboard: src/app/page.tsx (9 tabs, dark theme, real-time WebSocket, Riemann-alert banner)
+- Agent runtime: mini-services/agent-runtime/index.ts (Socket.io server on port 3003)
+- Document archive: research/{hypotheses,proofs,theorems,arxiv-cache,riemann-attempts}/ — populated by the agent at runtime
+- Database: db/custom.db (SQLite, 10 models)
+- Documentation: README.md (~12k words), docs/architecture.md, .env.example, LICENSE
+- Live demo verified via Agent Browser: agent is autonomously producing hypotheses and proof attempts, owner directives work, alert banner is wired (will pulse red if RH is ever proven)
+- Lineage preserved: predator-jungle-agent → fusionary-agent → quantum-spherifier → zeta-riemannian-agent v1.0

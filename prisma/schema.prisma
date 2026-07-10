@@ -1,0 +1,206 @@
+// zeta-riemannian-agent v1.0 — Prisma schema
+// Persistent state for the zRiemannian autonomous mathematical research agent.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Core research artefacts
+// ---------------------------------------------------------------------------
+
+/// A mathematical claim proposed by the agent that has not yet been proven.
+model Hypothesis {
+  id              String         @id @default(cuid())
+  shortCode       String         @unique // e.g. H-2026-0042
+  title           String
+  statement       String         // full statement (LaTeX inline allowed)
+  motivation      String         // why this hypothesis matters for RH
+  strategySketch  String         // high-level proof strategy
+  relatedConcepts String         // JSON array of KG node ids
+  relatedArxivIds String         // JSON array of ArXiv ids
+  parentId        String?        // optional: hypothesis this one extends
+  parent          Hypothesis?    @relation("HypothesisChain", fields: [parentId], references: [id])
+  children        Hypothesis[]   @relation("HypothesisChain")
+  attempts        ProofAttempt[]
+  promotedTo      Theorem?
+  status          String         @default("open") // open | attempted | proven | disproven | abandoned
+  confidence      Float          @default(0.5)    // 0..1 — LLM self-assessed
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+/// An attempted proof of a hypothesis. May succeed (promoted to Theorem) or fail.
+model ProofAttempt {
+  id             String      @id @default(cuid())
+  shortCode      String      @unique // e.g. PA-2026-0133
+  hypothesisId   String
+  hypothesis     Hypothesis  @relation(fields: [hypothesisId], references: [id])
+  approach       String      // proof technique used (contradiction, induction, ...)
+  texSource      String      // full LaTeX source
+  texPath        String      // relative path under research/proofs/
+  pdfPath        String?     // relative path under research/proofs/ (if compiled)
+  verifierReport String      // LLM verifier's structured report
+  verdict        String      @default("pending") // pending | valid | invalid | inconclusive
+  verifierConfidence Float   @default(0)         // 0..1
+  cycleId        Int?        // which agent cycle produced this
+  promotedTheorem Theorem?   @relation("TheoremPromotion")
+  createdAt      DateTime    @default(now())
+
+  @@index([hypothesisId])
+  @@index([verdict])
+  @@index([createdAt])
+}
+
+/// A hypothesis that has been promoted to a theorem after a verified proof.
+/// Theorems become reusable tools for future proof attempts.
+model Theorem {
+  id              String         @id @default(cuid())
+  shortCode       String         @unique // e.g. T-2026-0007
+  title           String
+  statement       String
+  proofTexSource  String
+  proofTexPath    String
+  proofPdfPath    String?
+  hypothesisId    String         @unique
+  hypothesis      Hypothesis     @relation(fields: [hypothesisId], references: [id])
+  attemptId       String         @unique
+  attempt         ProofAttempt   @relation("TheoremPromotion", fields: [attemptId], references: [id])
+  tags            String         // JSON array of tag strings (e.g. ["analytic-continuation","critical-strip"])
+  usesTheoremIds  String         // JSON array of Theorem ids used as tools in this proof
+  createdAt       DateTime       @default(now())
+
+  @@index([createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Central Riemann Hypothesis prober
+// ---------------------------------------------------------------------------
+
+/// A dedicated attempt to prove the Riemann Hypothesis itself.
+/// The agent launches one of these every N cycles (configurable).
+model RiemannAttempt {
+  id              String   @id @default(cuid())
+  shortCode       String   @unique // e.g. RH-2026-0003
+  strategy        String   // high-level strategy summary
+  texSource       String
+  texPath         String
+  pdfPath         String?
+  verifierReport  String
+  verdict         String   @default("pending") // pending | candidate-valid | invalid | inconclusive
+  verifierConfidence Float @default(0)
+  cycleId         Int?
+  createdAt       DateTime @default(now())
+
+  @@index([verdict])
+  @@index([createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// ArXiv integration
+// ---------------------------------------------------------------------------
+
+/// A preprint fetched from ArXiv (or arxiv-style mirror) and cached locally.
+model ArxivPaper {
+  id            String   @id @default(cuid())
+  arxivId       String   @unique // e.g. 2310.12345
+  title         String
+  authors       String   // JSON array
+  abstract      String
+  primaryCategory String
+  categories    String   // JSON array
+  publishedAt   DateTime?
+  fetchedAt     DateTime @default(now())
+  localPdfPath  String?  // relative path under research/arxiv-cache/
+    localTexPath  String?  // optional extracted TeX
+  summary       String?  // agent-generated summary
+  relevanceScore Float   @default(0) // 0..1 — how relevant to RH
+  citedBy       String   // JSON array of hypothesis/proof ids that cite it
+
+  @@index([relevanceScore])
+  @@index([primaryCategory])
+}
+
+// ---------------------------------------------------------------------------
+// Knowledge graph (mathematical concepts and their relations)
+// ---------------------------------------------------------------------------
+
+/// A node in the mathematical knowledge graph (e.g. "zeta function", "critical line").
+model KGNode {
+  id          String   @id @default(cuid())
+  label       String   @unique
+  kind        String   // concept | object | function | conjecture | theorem | technique
+  description String
+  createdAt   DateTime @default(now())
+  outEdges    KGEdge[] @relation("KGEdgeFrom")
+  inEdges     KGEdge[] @relation("KGEdgeTo")
+}
+
+/// A directed edge between two KG nodes.
+model KGEdge {
+  id          String @id @default(cuid())
+  fromNodeId  String
+  toNodeId    String
+  relation    String // e.g. "generalises", "implies", "uses", "constrains"
+  weight      Float  @default(1)
+  fromNode    KGNode @relation("KGEdgeFrom", fields: [fromNodeId], references: [id])
+  toNode      KGNode @relation("KGEdgeTo", fields: [toNodeId], references: [id])
+
+  @@unique([fromNodeId, toNodeId, relation])
+  @@index([fromNodeId])
+  @@index([toNodeId])
+}
+
+// ---------------------------------------------------------------------------
+// Agent runtime log
+// ---------------------------------------------------------------------------
+
+/// One cycle of the agent's autonomous loop.
+model AgentCycle {
+  id              Int      @id @default(autoincrement())
+  startedAt       DateTime @default(now())
+  endedAt         DateTime?
+  phase           String   // arxiv-scan | hypothesis-gen | proof-attempt | riemann-attempt | archive
+  summary         String   @default("")
+  llmCalls        Int      @default(0)
+  tokensUsed      Int      @default(0)
+  documentsProduced Int    @default(0)
+  status          String   @default("running") // running | ok | error
+  error           String?
+}
+
+/// An owner directive (human guidance) injected into the agent.
+model OwnerDirective {
+  id        String   @id @default(cuid())
+  kind      String   // set-focus | halt | resume | inject-hypothesis | rerun-cycle | priority
+  payload   String   // JSON
+  status    String   @default("queued") // queued | applied | rejected | expired
+  note      String?
+  createdAt DateTime @default(now())
+  appliedAt DateTime?
+}
+
+/// Global singleton holding the agent's mutable runtime state.
+model AgentState {
+  id              Int      @id @default(1)
+  isRunning       Boolean  @default(true)
+  isHalted        Boolean  @default(false)
+  riemannProven   Boolean  @default(false) // *** THE FLAG ***
+  riemannProvenAt DateTime?
+  riemannProvenAttemptId String?
+  currentCycleId  Int?
+  totalCycles     Int      @default(0)
+  totalHypotheses Int      @default(0)
+  totalTheorems   Int      @default(0)
+  totalArxivPapers Int     @default(0)
+  focusTopic      String?  // owner-set focus
+  updatedAt       DateTime @updatedAt
+}

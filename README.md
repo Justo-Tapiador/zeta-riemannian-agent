@@ -1,3 +1,8 @@
+
+<p align="center">
+  <img src="docs/zr-3.jpg" alt="zRiemannian-agent" width="640" />
+</p>
+
 # THE ZETA-RIEMANNIAN AGENT (:zRiemannian) v1.0
 
 **An Autonomous Mathematical Research Agent for the Riemann Hypothesis**

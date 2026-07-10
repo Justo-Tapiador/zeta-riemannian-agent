@@ -2,7 +2,6 @@
 <p align="center">
   <img src="docs/zr-3.jpg" alt="zRiemannian-agent" width="640" />
 </p>
-<img width="1091" height="1091" alt="image" src="https://github.com/user-attachments/assets/06e6b1c8-bfb1-4223-9984-09df4e12aa6e" />
 
 # THE ZETA-RIEMANNIAN AGENT (:zRiemannian) v1.0
 

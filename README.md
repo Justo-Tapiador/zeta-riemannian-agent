@@ -493,7 +493,7 @@ attempts on the next cycle.
 
 ```bash
 # Clone the repository
-git clone https://github.com/<your-user>/zeta-riemannian-agent.git
+git clone https://github.com/Justo-Tapiador/zeta-riemannian-agent.git
 cd zeta-riemannian-agent
 
 # Install dependencies

@@ -1,0 +1,76 @@
+# .npmignore — controls what is EXCLUDED from the npm package
+# (the "files" field in package.json controls what is INCLUDED;
+#  both work together, with "files" taking precedence).
+
+# ─── Secrets ────────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+.z-ai-config
+
+# ─── Dependencies ───────────────────────────────────────────────────────
+node_modules/
+
+# ─── Database ───────────────────────────────────────────────────────────
+db/*.db
+db/*.db-journal
+db/*.sqlite
+db/*.sqlite-journal
+
+# ─── Generated research artifacts (keep folders, ignore content) ────────
+research/proofs/*.tex
+research/proofs/*.pdf
+research/proofs/*.meta.json
+research/proofs/*.verifier.json
+research/proofs/*.log
+research/theorems/*.tex
+research/theorems/*.pdf
+research/theorems/*.tags.json
+research/riemann-attempts/*.tex
+research/riemann-attempts/*.pdf
+research/riemann-attempts/*.verifier.json
+research/arxiv-cache/*
+research/hypotheses/*.tex
+research/hypotheses/*.meta.json
+!research/**/.gitkeep
+
+# ─── Build artifacts ────────────────────────────────────────────────────
+.next/
+dist/
+*.tsbuildinfo
+
+# ─── Logs ───────────────────────────────────────────────────────────────
+*.log
+dev.log
+server.log
+
+# ─── IDE / editor ───────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ─── Git ────────────────────────────────────────────────────────────────
+.git/
+.gitignore
+
+# ─── Tests / coverage ───────────────────────────────────────────────────
+coverage/
+test/
+tests/
+
+# ─── Misc project files not needed in the package ───────────────────────
+worklog.md
+TODO
+Caddyfile
+eslint.config.mjs
+tsconfig.json
+postcss.config.mjs
+tailwind.config.ts
+components.json
+next.config.ts
+public/logo.svg
+public/robots.txt

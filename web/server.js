@@ -291,10 +291,48 @@ io.on('connection', async (socket) => {
     }
   });
 
-  socket.on('directive', (d) => {
-    if (orchestrator) {
-      orchestrator.enqueueDirective(d);
-      socket.emit('directive-accepted', { kind: d.kind, queuedAt: new Date().toISOString() });
+  socket.on('directive', async (d) => {
+    if (!orchestrator) {
+      socket.emit('directive-rejected', {
+        kind: d?.kind,
+        reason: 'orchestrator not available',
+      });
+      return;
+    }
+    try {
+      // enqueueDirective pushes to the in-memory queue AND persists to DB.
+      // It also triggers immediate processing via setImmediate, so by the
+      // time we get here the directive has at least been queued for apply.
+      const result = orchestrator.enqueueDirective(d);
+      if (result && typeof result.then === 'function') await result;
+
+      // Validate the kind against the orchestrator's known directives so
+      // the user gets immediate feedback if they typo'd or sent something
+      // the orchestrator's switch statement would silently drop.
+      const known =
+        typeof orchestrator.isKnownDirectiveKind === 'function'
+          ? orchestrator.isKnownDirectiveKind(d.kind)
+          : true;
+
+      if (!known) {
+        socket.emit('directive-rejected', {
+          kind: d.kind,
+          reason: 'unknown directive kind — orchestrator will ignore it',
+        });
+        console.error('[zRiemannian web/server.js] UNKNOWN DIRECTIVE kind=' + d.kind, d);
+        return;
+      }
+
+      socket.emit('directive-accepted', {
+        kind: d.kind,
+        queuedAt: new Date().toISOString(),
+      });
+    } catch (e) {
+      socket.emit('directive-rejected', {
+        kind: d?.kind,
+        reason: e?.message ?? String(e),
+      });
+      console.error('[zRiemannian web/server.js] directive error:', e);
     }
   });
 

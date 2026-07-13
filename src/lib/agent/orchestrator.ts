@@ -47,6 +47,26 @@ const RIEMANN_EVERY_N_CYCLES = 5;
 const ARXIV_EVERY_N_CYCLES = 3;
 const ARCHIVE_EVERY_N_CYCLES = 7;
 
+// ============================================================================
+// PATCH: Known directive kinds.
+// ----------------------------------------------------------------------------
+// Exposed via isKnownDirectiveKind() so the web server can reject unknown
+// kinds at the WS layer BEFORE the orchestrator's switch statement silently
+// drops them. This is the difference between "the user sees a green toast
+// that lies" and "the user sees a red toast that tells them the truth".
+// ============================================================================
+const KNOWN_DIRECTIVE_KINDS = new Set<OwnerDirectivePayload['kind']>([
+  'set-focus',
+  'halt',
+  'resume',
+  'force-riemann-attempt',
+  'inject-hypothesis',
+  'rerun-cycle',
+  'force-phase',
+  'priority',
+  'shutdown',
+]);
+
 export type EventListener = (ev: AgentEvent) => void;
 
 class Orchestrator {
@@ -109,6 +129,51 @@ class Orchestrator {
       this.riemannProven = existing.riemannProven;
       this.focusTopic = existing.focusTopic;
     }
+
+    // ========================================================================
+    // PATCH: Recover directives that were queued but not yet applied when
+    // the process was last shut down.
+    // ------------------------------------------------------------------------
+    // Without this, an in-flight `resume` directive (the most common one to
+    // be queued right before a halt-restart) would be lost forever on the
+    // next process restart — the in-memory queue is wiped, and the DB row
+    // stays in `queued` status indefinitely.
+    // ============================================================================
+    try {
+      const pending = await db.ownerDirective.findMany({
+        where: { status: 'queued' },
+        orderBy: { id: 'asc' },
+      });
+      for (const d of pending) {
+        try {
+          const payload = JSON.parse(d.payload) as OwnerDirectivePayload;
+          this.ownerDirectiveQueue.push(payload);
+        } catch {
+          // Skip malformed entries — mark them as rejected so they don't
+          // block recovery on the next restart.
+          await db.ownerDirective
+            .update({
+              where: { id: d.id },
+              data: { status: 'rejected', note: 'malformed payload on recovery' },
+            })
+            .catch(() => {});
+        }
+      }
+      if (pending.length > 0) {
+        log.info(`recovered ${pending.length} pending directive(s) from DB`);
+      }
+    } catch (e: any) {
+      // best-effort: don't fail start() just because recovery failed.
+      (log.error ?? log.info)?.(`failed to recover pending directives: ${e?.message ?? e}`);
+    }
+  }
+
+  // ============================================================================
+  // PATCH: Public validator so the web server can reject unknown directive
+  // kinds before they enter the queue.
+  // ============================================================================
+  isKnownDirectiveKind(kind: string): boolean {
+    return KNOWN_DIRECTIVE_KINDS.has(kind as OwnerDirectivePayload['kind']);
   }
 
   private scheduleCycle(delayMs: number) {
@@ -141,6 +206,24 @@ class Orchestrator {
   }
 
   private async runCycle() {
+    // ========================================================================
+    // PATCH (CRITICAL): Process queued owner directives FIRST, even if the
+    // agent is currently halted or in riemann-proven mode.
+    // ------------------------------------------------------------------------
+    // The previous implementation called applyQueuedDirectives() AFTER the
+    // `if (this.isHalted)` early-return. That created a chicken-and-egg
+    // deadlock: the 'resume' directive (which clears isHalted) could never
+    // be applied because every cycle exited early when isHalted was true.
+    // The user-visible symptom was the Halt/Resume toggle getting stuck on
+    // "Resume" (green) forever, with logs repeating
+    //   `agent is halted by owner — skipping cycle`
+    // indefinitely — even across process restarts, because ensureAgentState
+    // reloads isHalted=true from the DB on every boot.
+    //
+    // Moving this call ABOVE the halt check is the actual fix for that bug.
+    // ============================================================================
+    await this.applyQueuedDirectives();
+
     if (this.riemannProven) {
       // RH-proven mode: keep broadcasting the alert, do nothing else.
       emit(
@@ -156,9 +239,6 @@ class Orchestrator {
       this.scheduleCycle(CYCLE_INTERVAL_MS);
       return;
     }
-
-    // Apply queued owner directives first.
-    await this.applyQueuedDirectives();
 
     this.currentCycleId++;
     const cycleId = this.currentCycleId;
@@ -487,6 +567,29 @@ class Orchestrator {
           level: 'warn',
         });
       });
+
+    // ========================================================================
+    // PATCH (CRITICAL): Trigger immediate processing of the queue.
+    // ------------------------------------------------------------------------
+    // Without this, halt/resume directives would only take effect on the
+    // next scheduled cycle (up to 60s away at normal priority, or 300s at
+    // low priority). Worse, when the agent is halted the next cycle never
+    // reaches applyQueuedDirectives() at all (the original bug) — so the
+    // `resume` directive would sit in the queue forever. setImmediate
+    // ensures the queue is drained on the next tick of the event loop
+    // regardless of the cycle timer state.
+    //
+    // applyQueuedDirectives() is idempotent (it drains the queue with shift()
+    // and is safe to call concurrently — JS is single-threaded so there's no
+    // race), so calling it from multiple sites is fine.
+    // ============================================================================
+    setImmediate(() => {
+      this.applyQueuedDirectives().catch((e: any) => {
+        emit('error', `failed to apply directive ${d.kind}: ${e?.message ?? e}`, {
+          level: 'error',
+        });
+      });
+    });
   }
 
   private async applyQueuedDirectives() {
@@ -530,6 +633,9 @@ class Orchestrator {
           this.isHalted = false;
           await db.agentState.update({ where: { id: 1 }, data: { isHalted: false } });
           emit('owner-directive-applied', 'agent RESUMED by owner', { payload: { kind: d.kind } });
+          // Kick the cycle timer so the agent resumes immediately instead of
+          // waiting up to CYCLE_INTERVAL_MS for the next scheduled tick.
+          this.scheduleCycle(0);
           break;
 
         case 'force-riemann-attempt':

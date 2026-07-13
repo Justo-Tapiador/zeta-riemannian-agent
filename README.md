@@ -1,8 +1,8 @@
 
 <p align="center">
-  <img src="./docs/zr-3.jpg" alt="zRiemannian-agent" width="640" />
+  <img src="https://unpkg.com/zeta-riemannian-agent@latest/docs/zr-3.jpg" alt="zRiemannian-agent" width="640" />
 </p>
-# THE ZETA-RIEMANNIAN AGENT (:zRiemannian) v1.0
+# THE ZETA-RIEMANNIAN AGENT (:zRiemannian) v1.0.5
 
 **An Autonomous Mathematical Research Agent for the Riemann Hypothesis**
 
@@ -14,7 +14,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18-green.svg)](https://nodejs.org)
 [![Bun](https://img.shields.io/badge/bun-%3E%3D1.0-orange.svg)](https://bun.sh)
-[![Version](https://img.shields.io/badge/version-1.0.2-blue.svg)](#)
+[![Version](https://img.shields.io/badge/version-1.0.5-blue.svg)](#)
 
 ---
 
@@ -518,7 +518,7 @@ process restarts and can be inspected via the database.
 
 ### Prerequisites
 
-- **Node.js** ≥ 18 (or **Bun** ≥ 1.0 — recommended)
+- **Node.js** ≥ 18 (or **Bun** ≥ .3 — recommended)
 - **tectonic** (LaTeX engine) — optional but recommended for PDF compilation
   - Install: <https://tectonic-typesetting.github.io/book/en/installation.html>
 - An SQLite database (auto-created by Prisma)
@@ -767,7 +767,7 @@ fusionary-agent              (nuclear fusion research)
 quantum-spherifier           (quantum computing research)
         │
         ▼
-zeta-riemannian-agent v1.0   (this project — Riemann Hypothesis research)
+zeta-riemannian-agent v1.0.5   (this project — Riemann Hypothesis research)
 ```
 
 Each descendant inherits the AJN backbone, the multi-LLM router pattern,

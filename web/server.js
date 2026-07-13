@@ -234,21 +234,11 @@ const io = new SocketIOServer(httpServer, {
 io.on('connection', async (socket) => {
   console.log(`[zRiemannian web/server.js] client connected: ${socket.id}`);
 
-  // Send recent events buffer so new client sees history
-  if (recentEvents) {
-    socket.emit('recent-events', recentEvents(200));
-  }
-
-  // Send initial snapshot
-  if (orchestrator) {
-    try {
-      const snap = await orchestrator.snapshot();
-      socket.emit('snapshot', snap);
-    } catch (e) {
-      console.error('[zRiemannian web/server.js] snapshot error:', e.message);
-    }
-  }
-
+  // ─── Register ALL socket handlers FIRST, before any await ───────────
+  // This prevents a race condition where the client emits an event (like
+  // 'get-llm-providers') in its 'connect' handler before we've registered
+  // the server-side handler for it. All handlers must be synchronous
+  // registrations; async work happens inside each handler.
   socket.on('get-snapshot', async () => {
     if (!orchestrator) return;
     try {
@@ -315,6 +305,22 @@ io.on('connection', async (socket) => {
   socket.on('error', (err) => {
     console.error(`[zRiemannian web/server.js] socket error (${socket.id}):`, err);
   });
+
+  // ─── NOW do the async welcome (after handlers are registered) ────────
+  // Send recent events buffer so new client sees history
+  if (recentEvents) {
+    socket.emit('recent-events', recentEvents(200));
+  }
+
+  // Send initial snapshot
+  if (orchestrator) {
+    try {
+      const snap = await orchestrator.snapshot();
+      socket.emit('snapshot', snap);
+    } catch (e) {
+      console.error('[zRiemannian web/server.js] snapshot error:', e.message);
+    }
+  }
 });
 
 // Fan out new logger events to every connected client

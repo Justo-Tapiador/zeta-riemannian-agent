@@ -1,6 +1,6 @@
 {
   "name": "zeta-riemannian-agent",
-  "version": "1.0.2",
+  "version": "1.0.5",
   "description": "Autonomous Mathematical Research Agent for the Riemann Hypothesis. Built on the Artificial Junky Neuron (AJN) framework, extended from quantum-spherifier by Justo Tapiador Garcia (UA). Generates LaTeX/PDF mathematical documents (hypotheses, proofs, theorems, periodic Riemann-attempts) and enters RIEMANN-PROVEN MODE if the central conjecture is ever verifier-accepted.",
   "license": "MIT",
   "type": "commonjs",
@@ -42,14 +42,14 @@
     "z-ai-web-dev-sdk": "^0.0.18"
   },
   "devDependencies": {
+    "@eslint/js": "^9.18.0",
     "@types/node": "^22.10.0",
     "@types/xml2js": "^0.4.14",
     "bun-types": "^1.3.4",
     "eslint": "^9.18.0",
-    "@eslint/js": "^9.18.0",
-    "typescript-eslint": "^8.20.0",
     "prisma": "^6.11.1",
-    "typescript": "^5"
+    "typescript": "^5",
+    "typescript-eslint": "^8.20.0"
   },
   "keywords": [
     "riemann-hypothesis",

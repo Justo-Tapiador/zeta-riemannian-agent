@@ -11,6 +11,7 @@
   var events = [];
   var research = { hypotheses: [], theorems: [], riemann: [], arxiv: [], kg: { nodes: [], edges: [] } };
   var providers = [];
+  var cycles = [];
 
   // -------- Constants --------
   var BACKBONE_LAYERS = [
@@ -32,6 +33,9 @@
 
   // -------- Helpers --------
   function $(id) { return document.getElementById(id); }
+  // Public DOM helper — exposed on window for inline event handlers and
+  // future extensions. Currently the dashboard builds DOM via innerHTML
+  // templates, but el() is kept as a stable utility API.
   function el(tag, attrs, children) {
     var e = document.createElement(tag);
     if (attrs) {
@@ -58,7 +62,7 @@
     return e;
   }
   function safeJsonArray(s) {
-    try { var v = JSON.parse(s); return Array.isArray(v) ? v : []; } catch (e) { return []; }
+    try { var v = JSON.parse(s); return Array.isArray(v) ? v : []; } catch (_e) { return []; }
   }
   function escapeHtml(s) {
     if (s == null) return '';
@@ -128,6 +132,11 @@
       events.push(ev);
       if (events.length > 200) events = events.slice(-200);
       renderActivity();
+      // When a cycle ends, refresh the cycles table so the new row appears
+      // with its LLM provider/model info.
+      if (ev.kind === 'cycle-end' && socket) {
+        socket.emit('get-cycles');
+      }
     });
 
     socket.on('snapshot', function (s) {
@@ -142,6 +151,17 @@
       renderRiemann();
       renderArxiv();
       renderKG();
+      // r.cycles may be undefined when talking to an older server.
+      if (r.cycles) {
+        cycles = r.cycles;
+        renderCycles();
+      }
+    });
+
+    // Dedicated cycles event (lighter refresh than get-research).
+    socket.on('cycles', function (c) {
+      cycles = c;
+      renderCycles();
     });
 
     socket.on('llm-providers', function (p) {
@@ -168,6 +188,29 @@
     $('stat-riemann').textContent = snapshot.totalRiemannAttempts || 0;
     $('stat-arxiv').textContent = snapshot.totalArxivPapers || 0;
     $('stat-focus').textContent = snapshot.focusTopic || '(none — autonomous)';
+
+    // Reflect priority + forced-phase overrides in the Guidance tab badges.
+    // (Snapshot may come from an older orchestrator that didn't expose these
+    // fields — guard with hasOwnProperty so the UI doesn't break.)
+    var priority = (snapshot && Object.prototype.hasOwnProperty.call(snapshot, 'priorityLevel'))
+      ? snapshot.priorityLevel : 'normal';
+    var priorityBadge = $('priority-current');
+    if (priorityBadge) {
+      priorityBadge.textContent = priority;
+      priorityBadge.className = 'badge-mini priority-' + priority;
+    }
+    var prioritySel = $('priority-select');
+    if (prioritySel && prioritySel.value !== priority) {
+      prioritySel.value = priority;
+    }
+
+    var forced = (snapshot && Object.prototype.hasOwnProperty.call(snapshot, 'forcedPhase'))
+      ? snapshot.forcedPhase : null;
+    var forcedBadge = $('forced-phase-current');
+    if (forcedBadge) {
+      forcedBadge.textContent = forced || 'none';
+      forcedBadge.className = 'badge-mini' + (forced ? ' active' : '');
+    }
 
     // Riemann alert banner
     if (snapshot.riemannProven) {
@@ -213,6 +256,60 @@
     });
     feed.innerHTML = html;
     feed.scrollTop = feed.scrollHeight;
+  }
+
+  function renderCycles() {
+    var wrap = $('cycles-table-wrap');
+    if (!wrap) return;
+    if (!cycles || cycles.length === 0) {
+      wrap.innerHTML = '<p class="text-dim">No cycles yet.</p>';
+      return;
+    }
+    var html = '<table class="cycles-table">';
+    html += '<thead><tr>' +
+      '<th>#</th>' +
+      '<th>Phase</th>' +
+      '<th>Status</th>' +
+      '<th>Provider</th>' +
+      '<th>Model</th>' +
+      '<th>LLM calls</th>' +
+      '<th>Tokens (in/out)</th>' +
+      '<th>Started</th>' +
+      '<th>Duration</th>' +
+      '</tr></thead><tbody>';
+    cycles.forEach(function (c) {
+      var started = c.startedAt ? new Date(c.startedAt) : null;
+      var ended = c.endedAt ? new Date(c.endedAt) : null;
+      var durMs = (started && ended) ? (ended.getTime() - started.getTime()) : null;
+      var durStr = durMs !== null ? (durMs < 1000 ? durMs + 'ms' : (durMs / 1000).toFixed(1) + 's') : '—';
+      var startedStr = started ? started.toLocaleTimeString() : '—';
+
+      var providerBadge = c.llmProvider
+        ? '<span class="badge-mini provider-' + escapeHtml(c.llmProvider) + '">' + escapeHtml(c.llmProvider) + '</span>'
+        : '<span class="text-dim">—</span>';
+      var modelStr = c.llmModel ? '<code>' + escapeHtml(c.llmModel) + '</code>' : '<span class="text-dim">—</span>';
+      var statusCls = 'cycle-status-' + escapeHtml(c.status);
+      var tokensStr = (c.llmTokensIn || c.llmTokensOut)
+        ? (c.llmTokensIn || 0) + ' / ' + (c.llmTokensOut || 0)
+        : '<span class="text-dim">—</span>';
+
+      html += '<tr class="' + statusCls + '">' +
+        '<td>#' + c.id + '</td>' +
+        '<td><span class="badge phase-' + escapeHtml(c.phase) + '">' + escapeHtml(c.phase) + '</span></td>' +
+        '<td>' + escapeHtml(c.status) + '</td>' +
+        '<td>' + providerBadge + '</td>' +
+        '<td>' + modelStr + '</td>' +
+        '<td>' + (c.llmCalls || 0) + '</td>' +
+        '<td>' + tokensStr + '</td>' +
+        '<td>' + escapeHtml(startedStr) + '</td>' +
+        '<td>' + escapeHtml(durStr) + '</td>' +
+        '</tr>';
+      if (c.error) {
+        html += '<tr class="cycle-error-row"><td colspan="9"><span class="text-dim">error:</span> ' + escapeHtml(c.error) + '</td></tr>';
+      }
+    });
+    html += '</tbody></table>';
+    wrap.innerHTML = html;
   }
 
   function renderHypotheses() {
@@ -412,6 +509,45 @@
     socket.emit('directive', d);
   };
 
+  // Priority override — controls the cycle interval.
+  // critical=1s, high=5s, normal=60s, low=300s.
+  window.sendPriority = function () {
+    var sel = $('priority-select');
+    if (!sel) return;
+    var level = sel.value;
+    if (!['low', 'normal', 'high', 'critical'].includes(level)) {
+      showToast('Invalid priority', 'Must be low / normal / high / critical');
+      return;
+    }
+    window.sendDirective({ kind: 'priority', priority: level });
+    showToast('Priority set', 'Agent priority → ' + level);
+  };
+
+  // Force a specific phase for the next N cycles.
+  window.sendForcePhase = function () {
+    var sel = $('force-phase-select');
+    var ttlInput = $('force-phase-ttl');
+    if (!sel || !ttlInput) return;
+    var phase = sel.value;
+    var ttl = parseInt(ttlInput.value, 10);
+    if (!phase) {
+      showToast('Missing phase', 'Pick a phase to force.');
+      return;
+    }
+    if (isNaN(ttl) || ttl < 1 || ttl > 20) {
+      showToast('Invalid TTL', 'TTL must be an integer between 1 and 20.');
+      return;
+    }
+    window.sendDirective({ kind: 'force-phase', phase: phase, ttl: ttl });
+    showToast('Phase forced', phase + ' for ' + ttl + ' cycle(s)');
+  };
+
+  // Clear an active force-phase override.
+  window.clearForcePhase = function () {
+    window.sendDirective({ kind: 'force-phase', phase: 'idle', ttl: 0 });
+    showToast('Override cleared', 'Standard phase cadence resumed');
+  };
+
   window.injectHypothesis = function () {
     var title = $('inject-title').value.trim();
     var statement = $('inject-statement').value.trim();
@@ -440,6 +576,19 @@
   // -------- Init --------
   renderBackbone();
   connect();
+
+  // Expose helpers publicly so inline event handlers in index.html and
+  // future extensions can use them. Also marks them as 'used' for linters.
+  window.zRiemannian = {
+    el: el,
+    $: $,
+    sendDirective: window.sendDirective,
+    sendPriority: window.sendPriority,
+    sendForcePhase: window.sendForcePhase,
+    clearForcePhase: window.clearForcePhase,
+    injectHypothesis: window.injectHypothesis,
+    switchTab: switchTab,
+  };
 
   // Periodic snapshot refresh via HTTP (fallback if WS not connected)
   setInterval(function () {

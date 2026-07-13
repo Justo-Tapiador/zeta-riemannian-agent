@@ -455,10 +455,115 @@ main {
   color: var(--text-muted);
   margin-bottom: 4px;
 }
-.form-row { display: flex; gap: 8px; }
-.form-row input { flex: 1; }
+.form-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.form-row input { flex: 1 1 160px; min-width: 0; }
+.form-row select { flex: 1 1 160px; min-width: 0; }
 
 .button-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+
+/* ----- Guidance: priority & force-phase controls ----- */
+.badge-mini {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #27272a;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  margin-left: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  vertical-align: middle;
+}
+.badge-mini.active {
+  background: var(--accent-4);
+  color: white;
+  border-color: var(--accent-4);
+}
+.badge-mini.priority-low      { background: #166534; color: #bbf7d0; border-color: #166534; }
+.badge-mini.priority-normal   { background: #27272a; color: var(--text-muted); border-color: var(--border); }
+.badge-mini.priority-high     { background: #713f12; color: #fde047; border-color: #713f12; }
+.badge-mini.priority-critical { background: #7f1d1d; color: #fecaca; border-color: #7f1d1d; animation: pulse-critical 1.2s ease-in-out infinite; }
+
+@keyframes pulse-critical {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+.ttl-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.ttl-input {
+  width: 56px !important;
+  flex: 0 0 56px !important;
+  text-align: center;
+  padding: 6px 4px !important;
+}
+
+/* ----- Cycle history table (Activity tab) ----- */
+.cycles-table-wrap {
+  overflow-x: auto;
+  max-height: 500px;
+  overflow-y: auto;
+}
+.cycles-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.cycles-table thead {
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 1;
+}
+.cycles-table th {
+  text-align: left;
+  padding: 8px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.cycles-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.cycles-table td code {
+  font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+  font-size: 11px;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+.cycles-table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+.cycles-table tr.cycle-status-error td {
+  color: var(--accent);
+}
+.cycles-table tr.cycle-error-row td {
+  color: var(--accent);
+  font-size: 11px;
+  padding: 4px 10px 8px;
+  background: rgba(244, 63, 94, 0.05);
+}
+
+/* Provider-specific badges for the cycle table */
+.badge-mini.provider-zai  { background: #1e3a8a; color: #bfdbfe; border-color: #1e3a8a; }
+.badge-mini.provider-groq { background: #7c2d12; color: #fed7aa; border-color: #7c2d12; }
+.badge-mini.provider-none { background: #3f3f46; color: #d4d4d8; border-color: #3f3f46; }
 
 /* ----- AJN backbone ----- */
 .backbone-grid {

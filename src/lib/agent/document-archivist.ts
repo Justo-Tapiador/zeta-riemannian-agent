@@ -55,6 +55,8 @@ export const DIRS = {
   theorems: path.join(RESEARCH_ROOT, 'theorems'),
   arxiv: path.join(RESEARCH_ROOT, 'arxiv-cache'),
   riemann: path.join(RESEARCH_ROOT, 'riemann-attempts'),
+  // Alias for callers that use the full directory name.
+  'riemann-attempts': path.join(RESEARCH_ROOT, 'riemann-attempts'),
 } as const;
 
 export function ensureDirs() {

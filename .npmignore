@@ -16,6 +16,10 @@ db/*.db
 db/*.db-journal
 db/*.sqlite
 db/*.sqlite-journal
+prisma/db/*.db
+prisma/db/*.db-journal
+prisma/db/*.sqlite
+prisma/db/*.sqlite-journal
 
 # ─── Generated research artifacts (keep folders, ignore content) ────────
 research/proofs/*.tex
@@ -38,6 +42,12 @@ research/hypotheses/*.meta.json
 .next/
 dist/
 *.tsbuildinfo
+
+# ─── Lockfiles ──────────────────────────────────────────────────────────
+# Keep bun.lock for the dev workflow; exclude npm/yarn/pnpm.
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
 
 # ─── Logs ───────────────────────────────────────────────────────────────
 *.log
@@ -66,11 +76,5 @@ tests/
 worklog.md
 TODO
 Caddyfile
-eslint.config.mjs
 tsconfig.json
-postcss.config.mjs
-tailwind.config.ts
-components.json
-next.config.ts
-public/logo.svg
-public/robots.txt
+public/

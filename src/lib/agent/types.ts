@@ -24,6 +24,7 @@ export interface AgentEvent {
     | 'riemann-proven' // *** THE ALERT ***
     | 'llm-call'
     | 'llm-error'
+    | 'llm-provider-used' // emitted after every LLM call with provider/model/tokens
     | 'doc-written'
     | 'pdf-compiled'
     | 'kg-updated'
@@ -65,6 +66,8 @@ export interface VerifierReport {
   summary: string;
 }
 
+export type PriorityLevel = 'low' | 'normal' | 'high' | 'critical';
+
 export interface OwnerDirectivePayload {
   kind:
     | 'set-focus'
@@ -79,6 +82,10 @@ export interface OwnerDirectivePayload {
   focus?: string;
   hypothesisDraft?: HypothesisDraft;
   phase?: AgentPhase;
+  /** Used by `priority` directive. 'normal' is the default. */
+  priority?: PriorityLevel;
+  /** Used by `force-phase` directive. Pass `1` to force for one cycle, `0` to clear. */
+  ttl?: number;
   note?: string;
 }
 
@@ -89,6 +96,8 @@ export interface AgentSnapshot {
   riemannProvenAt: string | null;
   currentCycleId: number | null;
   currentPhase: AgentPhase;
+  forcedPhase: AgentPhase | null;
+  priorityLevel: PriorityLevel;
   totalCycles: number;
   totalHypotheses: number;
   totalTheorems: number;

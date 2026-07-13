@@ -50,14 +50,16 @@ console.log('[zRiemannian web/server.js] research archive at:', RESEARCH_ROOT);
 // require the compiled JS if present, or use bun to run this file. Since the
 // project ships with bun, we use the TypeScript source directly.
 
-let db, orchestrator, recentEvents, emit, listHypotheses, listTheorems,
+let orchestrator, recentEvents, emit, listHypotheses, listTheorems,
     listRiemannAttempts, listCachedPapers, listNodes, listEdges, llmRouter;
 
 try {
   // Try to load from src/lib/agent/* — works under bun (TS native) or
   // after a TS compile step.
   const libPath = path.join(PROJECT_ROOT, 'src', 'lib');
-  db = require(path.join(libPath, 'db'));
+  // Note: we intentionally do NOT load src/lib/db here — the orchestrator
+  // initialises the Prisma client internally. We only load the modules that
+  // the web server actually uses directly.
   orchestrator = require(path.join(libPath, 'agent', 'orchestrator')).default;
   const loggerMod = require(path.join(libPath, 'agent', 'logger'));
   recentEvents = loggerMod.recentEvents;
@@ -103,7 +105,6 @@ const MIME_TYPES = {
   '.md': 'text/markdown; charset=utf-8',
   '.tex': 'application/x-tex',
   '.pdf': 'application/pdf',
-  '.woff': 'font/woff',
 };
 
 // ---------------------------------------------------------------------------
@@ -261,15 +262,23 @@ io.on('connection', async (socket) => {
   socket.on('get-research', async () => {
     if (!listHypotheses) return;
     try {
-      const [hyps, thms, rhs, arxiv, nodes, edges] = await Promise.all([
+      const [hyps, thms, rhs, arxiv, nodes, edges, cycles] = await Promise.all([
         listHypotheses(100),
         listTheorems(100),
         listRiemannAttempts(100),
         listCachedPapers(100),
         listNodes(100),
         listEdges(200),
+        orchestrator.listRecentCycles(50),
       ]);
-      socket.emit('research', { hypotheses: hyps, theorems: thms, riemann: rhs, arxiv, kg: { nodes, edges } });
+      socket.emit('research', {
+        hypotheses: hyps,
+        theorems: thms,
+        riemann: rhs,
+        arxiv: arxiv,
+        kg: { nodes: nodes, edges: edges },
+        cycles: cycles,
+      });
     } catch (e) {
       console.error('[zRiemannian web/server.js] get-research error:', e.message);
     }
@@ -278,6 +287,17 @@ io.on('connection', async (socket) => {
   socket.on('get-llm-providers', () => {
     if (llmRouter) {
       socket.emit('llm-providers', llmRouter.listProviders());
+    }
+  });
+
+  // Dedicated event for fetching only recent cycles.
+  socket.on('get-cycles', async () => {
+    if (!orchestrator) return;
+    try {
+      const cycles = await orchestrator.listRecentCycles(50);
+      socket.emit('cycles', cycles);
+    } catch (e) {
+      console.error('[zRiemannian web/server.js] get-cycles error:', e.message);
     }
   });
 
@@ -319,7 +339,7 @@ setInterval(async () => {
   try {
     const s = await orchestrator.snapshot();
     io.emit('snapshot', s);
-  } catch (e) {
+  } catch (_e) {
     // ignore
   }
 }, 5000);

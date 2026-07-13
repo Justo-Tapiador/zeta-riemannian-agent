@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>zRiemannian — zeta-riemannian-agent v1.0</title>
+  <title>zRiemannian — zeta-riemannian-agent v1.0.2</title>
   <meta name="description" content="Autonomous mathematical research agent focused on the Riemann Hypothesis. Built on the Artificial Junky Neuron (AJN) framework.">
   <link rel="icon" type="image/png" href="/zr-1-small.png">
   <link rel="stylesheet" href="/css/style.css">
@@ -15,7 +15,7 @@
   <div class="logo-top">
     <img src="/zr-1-small.png" alt="zRiemannian logo">
     <div>
-      <h1>zRiemannian <span>· zeta-riemannian-agent v1.0</span></h1>
+      <h1>zRiemannian <span>· zeta-riemannian-agent v1.0.2</span></h1>
       <p>Autonomous mathematical research agent · Riemann Hypothesis focus · AJN backbone</p>
     </div>
   </div>
@@ -97,6 +97,15 @@
         </div>
       </div>
     </div>
+
+    <div class="card" style="margin-top:16px;">
+      <div class="card-header">📚 Cycle history <span class="text-dim text-sm">(last 50 cycles — shows which LLM provider served each)</span></div>
+      <div class="card-body">
+        <div id="cycles-table-wrap" class="cycles-table-wrap">
+          <p class="text-dim">No cycles yet.</p>
+        </div>
+      </div>
+    </div>
   </section>
 
   <!-- HYPOTHESES -->
@@ -173,6 +182,7 @@
   <!-- GUIDANCE -->
   <section id="tab-guidance" class="tab-panel">
     <div class="guidance-grid">
+
       <div class="card">
         <div class="card-header">🧠 Agent control</div>
         <div class="card-body">
@@ -190,6 +200,47 @@
             <button id="resume-btn" class="success" onclick="sendDirective({kind:'resume'})">▶ Resume</button>
             <button class="primary" onclick="sendDirective({kind:'force-riemann-attempt'})">🎯 Force Riemann attempt</button>
             <button class="ghost" onclick="sendDirective({kind:'rerun-cycle'})">🔄 Rerun cycle</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">⚡ Priority &amp; phase overrides</div>
+        <div class="card-body">
+          <div class="form-group">
+            <label>Priority level <span id="priority-current" class="badge-mini">normal</span></label>
+            <div class="form-row">
+              <select id="priority-select">
+                <option value="low">🟢 low — 5 min/cycle (throttle)</option>
+                <option value="normal" selected>⚪ normal — 60 s/cycle (default)</option>
+                <option value="high">🟡 high — 5 s/cycle</option>
+                <option value="critical">🔴 critical — 1 s/cycle (interactive)</option>
+              </select>
+              <button class="primary" onclick="sendPriority()">Apply</button>
+            </div>
+            <p class="text-dim text-sm mt-2">Controls the cycle interval. <code>critical</code> gives near-real-time feedback; <code>low</code> throttles for cost/CPU control.</p>
+          </div>
+          <hr style="border-color: var(--border); margin: 12px 0;">
+          <div class="form-group">
+            <label>Force phase <span id="forced-phase-current" class="badge-mini">none</span></label>
+            <div class="form-row">
+              <select id="force-phase-select">
+                <option value="arxiv-scan">arxiv-scan — refresh preprint cache</option>
+                <option value="hypothesis-gen">hypothesis-gen — propose a new hypothesis</option>
+                <option value="proof-attempt">proof-attempt — try proving an open hypothesis</option>
+                <option value="riemann-attempt">riemann-attempt — full RH proof attempt</option>
+                <option value="archive">archive — regenerate INDEX.md</option>
+                <option value="idle">idle — no-op</option>
+              </select>
+              <label class="ttl-label">TTL:
+                <input id="force-phase-ttl" type="number" min="1" max="20" value="1" class="ttl-input">
+              </label>
+              <button class="primary" onclick="sendForcePhase()">Force</button>
+            </div>
+            <div class="button-row" style="margin-top:8px;">
+              <button class="ghost" onclick="clearForcePhase()">Clear override</button>
+            </div>
+            <p class="text-dim text-sm mt-2">Forces the next <strong>N</strong> cycles to use the chosen phase (clamped 1..20). When TTL expires, the standard cadence resumes.</p>
           </div>
         </div>
       </div>
@@ -213,6 +264,7 @@
           <p class="text-dim text-sm mt-2">The injected hypothesis bypasses LLM generation and is immediately available for proof attempts on the next cycle.</p>
         </div>
       </div>
+
     </div>
   </section>
 
@@ -238,7 +290,7 @@
     <img src="/zr-2-small.png" alt="zRiemannian footer logo">
   </div>
   <div class="footer-info">
-    <span>zRiemannian v1.0 · MIT License · Universidad de Alicante (lineage: predator-jungle-agent → fusionary → quantum-spherifier → zeta-riemannian-agent)</span>
+    <span>zRiemannian v1.0.2 · MIT License · Universidad de Alicante (lineage: predator-jungle-agent → fusionary → quantum-spherifier → zeta-riemannian-agent)</span>
     <span>Node.js native · Socket.io · tectonic</span>
   </div>
 </footer>

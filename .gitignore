@@ -8,22 +8,30 @@ node_modules
 !.yarn/releases
 !.yarn/versions
 
+# Lockfiles — keep only bun.lock (project runtime is bun)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
 # Testing
 /coverage
 
-# Next.js (legacy)
+# Build artifacts
+/dist/
+/build/
 /.next/
 /out/
-
-# Production builds
-/build
-/dist/
 
 # Misc OS / editor
 .DS_Store
 *.pem
 Thumbs.db
 desktop.ini
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
 
 # Debug logs
 npm-debug.log*
@@ -36,7 +44,7 @@ dev.out.log
 server.log
 research/proofs/*.log
 
-# Secrets - NEVER COMMIT
+# Secrets — NEVER COMMIT
 .env
 .env.*
 !.env.example
@@ -51,11 +59,15 @@ local-*
 *.tsbuildinfo
 next-env.d.ts
 
-# Database (SQLite)
+# Database (SQLite) — never commit binary state
 db/*.db
 db/*.db-journal
 db/*.sqlite
 db/*.sqlite-journal
+prisma/db/*.db
+prisma/db/*.db-journal
+prisma/db/*.sqlite
+prisma/db/*.sqlite-journal
 
 # Compiled output
 dist/
@@ -79,12 +91,7 @@ research/hypotheses/*.meta.json
 # Keep INDEX.md tracked
 !research/INDEX.md
 
-# Skills directory
-/skills/
+# Internal worklog (build-time log; do not publish)
+worklog.md
 
-# IDE / editors
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
+# IDE / editors (already covered above; keep for backward compat)

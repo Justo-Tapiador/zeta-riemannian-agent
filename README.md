@@ -1,6 +1,6 @@
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Justo-Tapiador/zeta-riemannian-agent/v1.0.0/docs/zr-3.jpg" alt="zRiemannian-agent" width="640" />
+  <img src="./docs/zr-3.jpg" alt="zRiemannian-agent" width="640" />
 </p>
 # THE ZETA-RIEMANNIAN AGENT (:zRiemannian) v1.0
 
@@ -14,7 +14,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18-green.svg)](https://nodejs.org)
 [![Bun](https://img.shields.io/badge/bun-%3E%3D1.0-orange.svg)](https://bun.sh)
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](#)
+[![Version](https://img.shields.io/badge/version-1.0.2-blue.svg)](#)
 
 ---
 
@@ -111,8 +111,9 @@ Alicante), which defines the AJN architecture.
 7. **Multi-LLM task routing** — Different cognitive tasks use the most
    appropriate frontier LLM: GLM-4.6 for hypothesis generation and proof
    sketching, GLM-4.6 again for adversarial verification, with automatic
-   failover to OpenAI, Anthropic, Google Gemini, and DeepSeek when API
-   keys are present.
+   failover to Groq (Llama 3.3 70B) when GROQ_API_KEY is present. Other
+   providers (OpenAI, Anthropic, Google Gemini, DeepSeek) are listed in
+   the dashboard but not yet wired into the failover chain.
 
 ---
 
@@ -171,13 +172,13 @@ the project brief:
 zRiemannian is a **14-layer ANN-Psi backbone** (AJN + Transformer) wrapped
 in a research-cycle orchestrator, backed by a multi-LLM router, a
 mathematical knowledge graph, an ArXiv adapter, and a hierarchical document
-archive. The whole system is served by a Next.js 16 web dashboard and a
+archive. The whole system is served by a native Node.js web dashboard and a
 WebSocket mini-service.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    Owner Guidance Layer                          │
-│   Web Dashboard (Next.js 16 + shadcn/ui)  ·  WebSocket           │
+│   Web Dashboard (Node.js + vanilla JS + Socket.io)  ·  WebSocket │
 └───────────────────────┬─────────────────────────────────────────┘
                         │ ws://?XTransformPort=3003
 ┌───────────────────────▼─────────────────────────────────────────┐
@@ -200,8 +201,8 @@ WebSocket mini-service.
                         │
 ┌───────────────────────▼─────────────────────────────────────────┐
 │              LLM Router (task-routed multi-LLM)                  │
-│  ZAI/GLM-4.6 (primary) · OpenAI GPT-4o · Claude Opus 4.1 ·      │
-│  Gemini 2.0 Pro · DeepSeek-R1 · Local (Ollama)                  │
+│  ZAI/GLM-4.6 (primary) · Groq Llama 3.3 70B (fallback) ·        │
+│  OpenAI GPT-4o · Claude Opus 4.1 · Gemini 2.0 Pro · DeepSeek-R1 │
 └───────────────────────┬─────────────────────────────────────────┘
                         │
          ┌──────────────┼──────────────┬─────────────┐
@@ -318,11 +319,25 @@ appropriate frontier LLM available in the runtime.
 ### Failover chain
 
 The router is wired around the **z-ai-web-dev-sdk** (which exposes Z.ai's
-GLM-4.6 family), with pluggable adapters for OpenAI, Anthropic, Google
-Gemini, and DeepSeek when API keys are present. If the primary ZAI call
-errors or times out (90s), the router falls back to a deterministic stub
-so the agent can still produce *something* — clearly tagged in the UI so
-the owner knows creative generation is degraded.
+GLM-4.6 family) as primary. If the ZAI call errors or times out (90s),
+the router falls back to **Groq** (Llama 3.3 70B Versatile) when
+`GROQ_API_KEY` is set. If Groq is also unavailable, the router falls back
+to a deterministic stub so the agent can still produce *something* —
+clearly tagged in the UI so the owner knows creative generation is
+degraded.
+
+```
+   1. ZAI / GLM-4.6           (primary — auto-available in sandbox,
+                                or via ZAI_API_KEY / .z-ai-config)
+   2. Groq / Llama 3.3 70B    (first fallback — requires GROQ_API_KEY)
+   3. Deterministic stub      (last resort)
+```
+
+Other providers (OpenAI, Anthropic, Google Gemini, DeepSeek) are listed
+in the dashboard's provider panel for visibility but are not yet wired
+into the call chain. They can be added by extending `callGroq()` into a
+generic OpenAI-compatible dispatcher — OpenAI, DeepSeek and Groq all
+speak the same `/v1/chat/completions` API shape.
 
 ### Configuration
 
@@ -331,6 +346,14 @@ providers (see `.env.example`):
 
 ```
 # ZAI is auto-available in this sandbox; no key needed.
+
+# Groq — first fallback in the failover chain.
+# Get a key at https://console.groq.com/keys
+GROQ_API_KEY=gsk_...
+# Optional: override the default model
+# GROQ_MODEL=llama-3.3-70b-versatile
+
+# Other providers (listed in the UI but not yet wired into call()):
 OPENAI_API_KEY=...
 ANTHROPIC_API_KEY=...
 GOOGLE_API_KEY=...
@@ -465,18 +488,29 @@ Directives are queued and applied at the start of the next cycle.
 
 | Directive | Effect |
 |-----------|--------|
-| `set-focus` | Bias hypothesis generation toward a specific topic (e.g. "Hilbert–Pólya operator construction"). |
+| `set-focus` | Bias hypothesis generation toward a specific topic (e.g. "Hilbert–Pólya operator construction"). Pass an empty string to clear. |
 | `halt` | Pause the autonomous cycle loop. The agent stays alive and accepts further directives. |
 | `resume` | Unpause the cycle loop. |
 | `force-riemann-attempt` | Trigger a Riemann attempt immediately, outside the normal 5-cycle cadence. |
 | `inject-hypothesis` | Inject a specific hypothesis (title, statement, motivation) bypassing LLM generation. |
-| `rerun-cycle` | Force the next cycle to run immediately. |
+| `rerun-cycle` | Force the next cycle to run immediately, regardless of the current cycle interval. Useful when the agent is halted: triggers a one-shot cycle without resuming the autonomous loop. |
+| `force-phase` | Force the next N cycles to use a specific phase (`arxiv-scan`, `hypothesis-gen`, `proof-attempt`, `riemann-attempt`, `archive`, `idle`). Pass `{phase, ttl}` where `ttl` defaults to 1 (one cycle) and is clamped to 1..20. Pass `ttl: 0` to clear an active override. |
+| `priority` | Set the agent's priority level, which controls the cycle interval: `critical` = 1 s/cycle, `high` = 5 s, `normal` = 60 s (default), `low` = 300 s. Use `critical` during interactive debugging or when waiting for a Riemann attempt; use `low` to throttle the agent when CPU/LLM budget is constrained. |
 | `shutdown` | Stop the orchestrator entirely. |
 
 The `inject-hypothesis` directive is particularly useful for owners who
 want to test a specific mathematical idea without waiting for the LLM to
 propose it. The injected hypothesis is immediately available for proof
 attempts on the next cycle.
+
+The `force-phase` directive composes with the normal cadence: when the
+TTL expires, the agent resumes its standard phase picker (`riemann-attempt`
+every 5 cycles, `arxiv-scan` every 3, `archive` every 7, otherwise
+alternating `hypothesis-gen` / `proof-attempt`).
+
+All directives are persisted in the `OwnerDirective` table with status
+`queued` → `applied` (or `rejected`), so the directive history survives
+process restarts and can be inspected via the database.
 
 ---
 
@@ -532,7 +566,7 @@ the **● live** badge should appear in the header, the **cycle #** counter
 should increment, and the **Activity** tab should start filling with
 events.
 
-### Native Node.js web server (no Next.js, no React)
+### Native Node.js web server (no React, no build step)
 
 The web dashboard is served by a **single-file native Node.js HTTP server**
 at `web/server.js` — plain HTML + vanilla JS + CSS, no build step. The
@@ -614,12 +648,12 @@ let it work. You can monitor its progress through:
 
 ### Web Dashboard
 
-The dashboard is built with **Next.js 16**, **Tailwind CSS 4**, and
-**shadcn/ui**. It connects to the agent runtime via WebSocket (Socket.io)
-and receives real-time updates. The dark theme is inspired by terminal
-editors and Bloomberg-style financial dashboards — the goal is to make
-every cycle, every hypothesis, and every Riemann attempt visible at a
-glance.
+The dashboard is built with **plain Node.js**, **vanilla JavaScript**, and
+**CSS** (no React, no JSX, no build step). It connects to the agent runtime
+via WebSocket (Socket.io) and receives real-time updates. The dark theme
+is inspired by terminal editors and Bloomberg-style financial dashboards —
+the goal is to make every cycle, every hypothesis, and every Riemann
+attempt visible at a glance.
 
 The most important UI element is the **Riemann alert banner**: a
 full-width, pulsing red bar that appears at the top of every page when
@@ -643,13 +677,16 @@ schema (`prisma/schema.prisma`).
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DATABASE_URL` | `file:/home/z/my-project/db/custom.db` | SQLite database URL |
-| `OPENAI_API_KEY` | (unset) | OpenAI GPT-4o API key |
-| `ANTHROPIC_API_KEY` | (unset) | Anthropic Claude Opus 4.1 API key |
-| `GOOGLE_API_KEY` | (unset) | Google Gemini 2.0 Pro API key |
-| `DEEPSEEK_API_KEY` | (unset) | DeepSeek R1 API key |
+| `DATABASE_URL` | `file:./prisma/db/custom.db` | SQLite database URL (relative to project root) |
+| `GROQ_API_KEY` | (unset) | Groq API key — enables the first LLM fallback (Llama 3.3 70B) |
+| `GROQ_MODEL` | `llama-3.3-70b-versatile` | Groq model override |
+| `OPENAI_API_KEY` | (unset) | OpenAI GPT-4o API key (listed in UI, not yet wired into call()) |
+| `ANTHROPIC_API_KEY` | (unset) | Anthropic Claude Opus 4.1 API key (listed in UI, not yet wired) |
+| `GOOGLE_API_KEY` | (unset) | Google Gemini 2.0 Pro API key (listed in UI, not yet wired) |
+| `DEEPSEEK_API_KEY` | (unset) | DeepSeek R1 API key (listed in UI, not yet wired) |
 
-ZAI/GLM-4.6 is auto-available in the sandbox; no key needed.
+ZAI/GLM-4.6 is auto-available in the sandbox; no key needed. Set
+`GROQ_API_KEY` to enable the first fallback in the failover chain.
 
 ### Tunable constants (in source)
 
@@ -671,37 +708,28 @@ zeta-riemannian-agent/
 ├── README.md                          # this file
 ├── LICENSE                            # MIT
 ├── .env.example                       # template for environment variables
-├── package.json                       # Next.js + Prisma + socket.io dependencies
+├── package.json                       # Prisma + socket.io + z-ai-web-dev-sdk
 ├── prisma/
 │   └── schema.prisma                  # Hypothesis, ProofAttempt, Theorem, RiemannAttempt, ArxivPaper, KGNode, KGEdge, AgentCycle, OwnerDirective, AgentState
 ├── src/
-│   ├── app/
-│   │   ├── layout.tsx                 # root layout (dark theme, metadata)
-│   │   ├── page.tsx                   # the 9-tab dashboard
-│   │   ├── globals.css
-│   │   └── api/
-│   │       └── research/
-│   │           └── file/
-│   │               └── route.ts       # read-only file server for research/*
-│   ├── lib/
-│   │   ├── db.ts                      # Prisma client
-│   │   └── agent/
-│   │       ├── types.ts               # shared TypeScript types
-│   │       ├── logger.ts              # structured logger with ring buffer
-│   │       ├── ajn-backbone.ts        # 14-layer ANN-Psi backbone spec
-│   │       ├── llm-router.ts          # multi-LLM task-routed router
-│   │       ├── arxiv-adapter.ts       # ArXiv API + caching
-│   │       ├── latex-compiler.ts      # tectonic wrapper
-│   │       ├── document-archivist.ts  # hierarchical LaTeX storage + templates
-│   │       ├── knowledge-graph.ts     # KG nodes + edges + seeding
-│   │       ├── hypothesis-generator.ts
-│   │       ├── proof-attempter.ts
-│   │       ├── proof-verifier.ts
-│   │       ├── theorem-archivist.ts
-│   │       ├── riemann-prober.ts      # *** the central RH prober + alert ***
-│   │       ├── json-utils.ts          # robust JSON extractor for LaTeX-in-JSON
-│   │       └── orchestrator.ts        # main autonomous loop
-│   └── components/ui/                 # shadcn/ui components
+│   └── lib/
+│       ├── db.ts                      # Prisma client
+│       └── agent/
+│           ├── types.ts               # shared TypeScript types
+│           ├── logger.ts              # structured logger with ring buffer
+│           ├── ajn-backbone.ts        # 14-layer ANN-Psi backbone spec
+│           ├── llm-router.ts          # multi-LLM task-routed router
+│           ├── arxiv-adapter.ts       # ArXiv API + caching
+│           ├── latex-compiler.ts      # tectonic wrapper
+│           ├── document-archivist.ts  # hierarchical LaTeX storage + templates
+│           ├── knowledge-graph.ts     # KG nodes + edges + seeding
+│           ├── hypothesis-generator.ts
+│           ├── proof-attempter.ts
+│           ├── proof-verifier.ts
+│           ├── theorem-archivist.ts
+│           ├── riemann-prober.ts      # *** the central RH prober + alert ***
+│           ├── json-utils.ts          # robust JSON extractor for LaTeX-in-JSON
+│           └── orchestrator.ts        # main autonomous loop
 ├── mini-services/
 │   └── agent-runtime/
 │       ├── package.json

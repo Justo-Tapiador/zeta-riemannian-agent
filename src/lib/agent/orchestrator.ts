@@ -24,7 +24,7 @@ import {
   backboneSelfCheck,
   type ContextVector,
 } from './ajn-backbone';
-import { seedKnowledgeGraph, listNodes, listEdges } from './knowledge-graph';
+import { seedKnowledgeGraph, listNodes } from './knowledge-graph';
 import {
   searchArxiv,
   cacheArxivHit,
@@ -37,7 +37,7 @@ import { attemptProof } from './proof-attempter';
 import { verifyProof, PROMOTION_THRESHOLD } from './proof-verifier';
 import { promoteToTheorem, toolkitSummary, listTheorems } from './theorem-archivist';
 import { attemptRiemannProof, listRiemannAttempts } from './riemann-prober';
-import type { AgentEvent, AgentPhase, AgentSnapshot, OwnerDirectivePayload } from './types';
+import type { AgentEvent, AgentPhase, AgentSnapshot, OwnerDirectivePayload, PriorityLevel } from './types';
 import { ensureDirs, writeTex, writeSidecar, hypothesisTex, makeShortCode, rel } from './document-archivist';
 import fs from 'fs';
 import path from 'path';
@@ -60,6 +60,12 @@ class Orchestrator {
   private focusTopic: string | null = null;
   private ownerDirectiveQueue: OwnerDirectivePayload[] = [];
   private cycling = false;
+
+  // Owner overrides (set by directives, consumed by pickPhase / runCycle).
+  private forcedPhase: AgentPhase | null = null; // set by `force-phase`
+  private forcedPhaseTtl = 0; // cycles remaining for forcedPhase (0 = clear after next cycle)
+  private priorityLevel: PriorityLevel = 'normal'; // set by `priority`
+  private cycleIntervalOverride: number | null = null; // derived from priority
 
   async start() {
     ensureDirs();
@@ -107,12 +113,31 @@ class Orchestrator {
 
   private scheduleCycle(delayMs: number) {
     if (this.timer) clearTimeout(this.timer);
+    // Priority overrides the requested delay if it's shorter.
+    const effectiveDelay = Math.min(delayMs, this.effectiveCycleInterval());
     this.timer = setTimeout(() => {
       this.runCycle().catch((e) => {
         emit('error', `cycle crashed: ${e?.message ?? e}`, { level: 'error' });
         this.scheduleCycle(CYCLE_INTERVAL_MS);
       });
-    }, delayMs);
+    }, effectiveDelay);
+  }
+
+  /**
+   * Effective cycle interval based on the current priority level.
+   * 'critical' overrides everything to a 1s tick so the owner gets
+   * near-real-time feedback during a forced run.
+   * 'high' = 5s, 'normal' = 60s (default), 'low' = 300s (throttle).
+   */
+  private effectiveCycleInterval(): number {
+    if (this.cycleIntervalOverride !== null) return this.cycleIntervalOverride;
+    switch (this.priorityLevel) {
+      case 'critical': return 1_000;
+      case 'high':     return 5_000;
+      case 'low':      return 300_000;
+      case 'normal':
+      default:         return CYCLE_INTERVAL_MS;
+    }
   }
 
   private async runCycle() {
@@ -139,6 +164,10 @@ class Orchestrator {
     const cycleId = this.currentCycleId;
     const phase = this.pickPhase(cycleId);
     this.currentPhase = phase;
+
+    // Reset the per-cycle LLM accounting so the stats we persist at the end
+    // reflect only this cycle's calls.
+    llmRouter.resetCycleStats();
 
     const cycle = await db.agentCycle.create({
       data: { startedAt: new Date(), phase, status: 'running' },
@@ -201,15 +230,47 @@ class Orchestrator {
         await fireLayer(ctx, BACKBONE_LAYERS[i]);
       }
 
+      // Persist the LLM stats accumulated during this cycle.
+      const stats = llmRouter.cycleStats();
       await db.agentCycle.update({
         where: { id: cycle.id },
-        data: { endedAt: new Date(), status: 'ok' },
+        data: {
+          endedAt: new Date(),
+          status: 'ok',
+          llmCalls: stats.calls,
+          llmTokensIn: stats.tokensIn,
+          llmTokensOut: stats.tokensOut,
+          llmProvider: stats.provider,
+          llmModel: stats.model,
+        },
       });
-      emit('cycle-end', `cycle #${cycleId} ok`, { cycleId, phase });
+      emit('cycle-end', `cycle #${cycleId} ok (provider=${stats.provider ?? 'none'}, model=${stats.model ?? 'none'})`, {
+        cycleId,
+        phase,
+        payload: {
+          llmCalls: stats.calls,
+          llmProvider: stats.provider,
+          llmModel: stats.model,
+          tokensIn: stats.tokensIn,
+          tokensOut: stats.tokensOut,
+        },
+      });
     } catch (e: any) {
+      // Even on error, persist whatever LLM stats we managed to collect
+      // before the crash — useful for debugging which provider was in use.
+      const stats = llmRouter.cycleStats();
       await db.agentCycle.update({
         where: { id: cycle.id },
-        data: { endedAt: new Date(), status: 'error', error: e?.message ?? String(e) },
+        data: {
+          endedAt: new Date(),
+          status: 'error',
+          error: e?.message ?? String(e),
+          llmCalls: stats.calls,
+          llmTokensIn: stats.tokensIn,
+          llmTokensOut: stats.tokensOut,
+          llmProvider: stats.provider,
+          llmModel: stats.model,
+        },
       });
       emit('error', `cycle #${cycleId} failed: ${e?.message ?? e}`, {
         cycleId,
@@ -223,6 +284,22 @@ class Orchestrator {
   }
 
   private pickPhase(cycleId: number): AgentPhase {
+    // Owner-requested phase override (set by `force-phase` directive).
+    // Takes precedence over the standard cadence. TTL counts down each cycle.
+    if (this.forcedPhase) {
+      const phase = this.forcedPhase;
+      if (this.forcedPhaseTtl > 0) {
+        this.forcedPhaseTtl--;
+        if (this.forcedPhaseTtl === 0) {
+          this.forcedPhase = null;
+        }
+      }
+      emit('log', `phase override active: ${phase} (ttl remaining after this cycle: ${this.forcedPhaseTtl})`, {
+        cycleId,
+        payload: { forcedPhase: phase, ttl: this.forcedPhaseTtl },
+      });
+      return phase;
+    }
     if (cycleId % RIEMANN_EVERY_N_CYCLES === 0) return 'riemann-attempt';
     if (cycleId % ARXIV_EVERY_N_CYCLES === 0) return 'arxiv-scan';
     if (cycleId % ARCHIVE_EVERY_N_CYCLES === 0) return 'archive';
@@ -393,7 +470,23 @@ class Orchestrator {
 
   enqueueDirective(d: OwnerDirectivePayload) {
     this.ownerDirectiveQueue.push(d);
-    emit('log', `owner directive queued: ${d.kind}`, { payload: d });
+    emit('log', `owner directive queued: ${d.kind}`, { payload: { ...d } as Record<string, unknown> });
+    // Persist immediately so the queue survives a process restart.
+    // Status starts as 'queued'; it transitions to 'applied' or 'rejected'
+    // when applyDirective() finishes.
+    db.ownerDirective
+      .create({
+        data: {
+          kind: d.kind,
+          payload: JSON.stringify(d),
+          status: 'queued',
+        },
+      })
+      .catch((e: any) => {
+        emit('error', `failed to persist directive ${d.kind}: ${e?.message ?? e}`, {
+          level: 'warn',
+        });
+      });
   }
 
   private async applyQueuedDirectives() {
@@ -404,87 +497,186 @@ class Orchestrator {
   }
 
   private async applyDirective(d: OwnerDirectivePayload) {
-    switch (d.kind) {
-      case 'set-focus':
-        this.focusTopic = d.focus ?? null;
-        await db.agentState.update({
-          where: { id: 1 },
-          data: { focusTopic: this.focusTopic },
-        });
-        emit('owner-directive-applied', `focus set to "${this.focusTopic}"`, {
-          payload: { kind: d.kind, focus: this.focusTopic },
-        });
-        break;
-      case 'halt':
-        this.isHalted = true;
-        await db.agentState.update({ where: { id: 1 }, data: { isHalted: true } });
-        emit('owner-directive-applied', 'agent HALTED by owner', { payload: { kind: d.kind } });
-        break;
-      case 'resume':
-        this.isHalted = false;
-        await db.agentState.update({ where: { id: 1 }, data: { isHalted: false } });
-        emit('owner-directive-applied', 'agent RESUMED by owner', { payload: { kind: d.kind } });
-        break;
-      case 'force-riemann-attempt':
-        emit('owner-directive-applied', 'owner forcing a Riemann attempt', {
-          payload: { kind: d.kind },
-        });
-        // Run the Riemann attempt synchronously outside the normal cycle.
-        const ctx = initialContext(this.currentCycleId + 1, 'riemann-attempt');
-        await this.phaseRiemannAttempt(ctx);
-        break;
-      case 'inject-hypothesis':
-        if (d.hypothesisDraft) {
-          // Persist directly without LLM generation.
-          const seq = (await db.hypothesis.count()) + 1;
-          const shortCode = makeShortCode('H', seq);
-          const tex = hypothesisTex({
-            shortCode,
-            title: d.hypothesisDraft.title,
-            statement: d.hypothesisDraft.statement,
-            motivation: d.hypothesisDraft.motivation,
-            strategySketch: d.hypothesisDraft.strategySketch,
-            relatedConcepts: d.hypothesisDraft.relatedConcepts,
-            relatedArxivIds: d.hypothesisDraft.relatedArxivIds,
-            confidence: d.hypothesisDraft.confidence,
+    const VALID_PHASES: AgentPhase[] = [
+      'arxiv-scan',
+      'hypothesis-gen',
+      'proof-attempt',
+      'riemann-attempt',
+      'archive',
+      'idle',
+    ];
+    const VALID_PRIORITIES: PriorityLevel[] = ['low', 'normal', 'high', 'critical'];
+
+    try {
+      switch (d.kind) {
+        case 'set-focus':
+          this.focusTopic = d.focus ?? null;
+          await db.agentState.update({
+            where: { id: 1 },
+            data: { focusTopic: this.focusTopic },
           });
-          const texAbs = writeTex('hypotheses', `${shortCode}.tex`, tex);
-          writeSidecar('hypotheses', `${shortCode}.meta.json`, {
-            shortCode,
-            draft: d.hypothesisDraft,
-            injectedByOwner: true,
-            generatedAt: new Date().toISOString(),
+          emit('owner-directive-applied', `focus set to "${this.focusTopic}"`, {
+            payload: { kind: d.kind, focus: this.focusTopic },
           });
-          await db.hypothesis.create({
-            data: {
+          break;
+
+        case 'halt':
+          this.isHalted = true;
+          await db.agentState.update({ where: { id: 1 }, data: { isHalted: true } });
+          emit('owner-directive-applied', 'agent HALTED by owner', { payload: { kind: d.kind } });
+          break;
+
+        case 'resume':
+          this.isHalted = false;
+          await db.agentState.update({ where: { id: 1 }, data: { isHalted: false } });
+          emit('owner-directive-applied', 'agent RESUMED by owner', { payload: { kind: d.kind } });
+          break;
+
+        case 'force-riemann-attempt':
+          emit('owner-directive-applied', 'owner forcing a Riemann attempt', {
+            payload: { kind: d.kind },
+          });
+          // Run the Riemann attempt synchronously outside the normal cycle.
+          {
+            const ctx = initialContext(this.currentCycleId + 1, 'riemann-attempt');
+            await this.phaseRiemannAttempt(ctx);
+          }
+          break;
+
+        case 'inject-hypothesis':
+          if (d.hypothesisDraft) {
+            // Persist directly without LLM generation.
+            const seq = (await db.hypothesis.count()) + 1;
+            const shortCode = makeShortCode('H', seq);
+            const tex = hypothesisTex({
               shortCode,
               title: d.hypothesisDraft.title,
               statement: d.hypothesisDraft.statement,
               motivation: d.hypothesisDraft.motivation,
               strategySketch: d.hypothesisDraft.strategySketch,
-              relatedConcepts: JSON.stringify(d.hypothesisDraft.relatedConcepts),
-              relatedArxivIds: JSON.stringify(d.hypothesisDraft.relatedArxivIds),
+              relatedConcepts: d.hypothesisDraft.relatedConcepts,
+              relatedArxivIds: d.hypothesisDraft.relatedArxivIds,
               confidence: d.hypothesisDraft.confidence,
-              status: 'open',
-            },
+            });
+            const texAbs = writeTex('hypotheses', `${shortCode}.tex`, tex);
+            writeSidecar('hypotheses', `${shortCode}.meta.json`, {
+              shortCode,
+              draft: d.hypothesisDraft,
+              injectedByOwner: true,
+              generatedAt: new Date().toISOString(),
+            });
+            await db.hypothesis.create({
+              data: {
+                shortCode,
+                title: d.hypothesisDraft.title,
+                statement: d.hypothesisDraft.statement,
+                motivation: d.hypothesisDraft.motivation,
+                strategySketch: d.hypothesisDraft.strategySketch,
+                relatedConcepts: JSON.stringify(d.hypothesisDraft.relatedConcepts),
+                relatedArxivIds: JSON.stringify(d.hypothesisDraft.relatedArxivIds),
+                confidence: d.hypothesisDraft.confidence,
+                status: 'open',
+              },
+            });
+            await db.agentState.update({
+              where: { id: 1 },
+              data: { totalHypotheses: { increment: 1 } },
+            });
+            emit('owner-directive-applied', `injected hypothesis ${shortCode}`, {
+              payload: { kind: d.kind, shortCode, texPath: rel(texAbs) },
+            });
+          } else {
+            emit('owner-directive-rejected', 'inject-hypothesis requires hypothesisDraft', {
+              payload: { kind: d.kind },
+            });
+          }
+          break;
+
+        case 'rerun-cycle':
+          // Force the next cycle to run immediately, regardless of the
+          // current cycle interval. We do this by clearing the pending
+          // timer and rescheduling with delay 0.
+          emit('owner-directive-applied', 'owner forcing immediate cycle rerun', {
+            payload: { kind: d.kind },
           });
-          await db.agentState.update({
-            where: { id: 1 },
-            data: { totalHypotheses: { increment: 1 } },
-          });
-          emit('owner-directive-applied', `injected hypothesis ${shortCode}`, {
-            payload: { kind: d.kind, shortCode, texPath: rel(texAbs) },
-          });
+          // If the agent is halted, we still allow this so the owner can
+          // trigger a one-shot cycle without resuming the autonomous loop.
+          this.scheduleCycle(0);
+          break;
+
+        case 'force-phase': {
+          // Force the next N cycles to use a specific phase. Default TTL = 1
+          // (just the next cycle). ttl=0 clears any active override.
+          if (!d.phase || !VALID_PHASES.includes(d.phase)) {
+            emit('owner-directive-rejected', `force-phase requires valid phase (got "${d.phase}")`, {
+              payload: { kind: d.kind, phase: d.phase, valid: VALID_PHASES },
+            });
+            break;
+          }
+          if (d.ttl === 0) {
+            this.forcedPhase = null;
+            this.forcedPhaseTtl = 0;
+            emit('owner-directive-applied', `phase override cleared`, {
+              payload: { kind: d.kind },
+            });
+          } else {
+            const ttl = Math.max(1, Math.min(20, d.ttl ?? 1)); // clamp 1..20
+            this.forcedPhase = d.phase;
+            this.forcedPhaseTtl = ttl;
+            emit('owner-directive-applied', `phase forced to "${d.phase}" for ${ttl} cycle(s)`, {
+              payload: { kind: d.kind, phase: d.phase, ttl },
+            });
+          }
+          break;
         }
-        break;
-      case 'shutdown':
-        await this.stop();
-        emit('owner-directive-applied', 'agent SHUTDOWN by owner', { payload: { kind: d.kind } });
-        break;
-      default:
-        emit('owner-directive-rejected', `unknown directive kind: ${d.kind}`, {
-          payload: { kind: d.kind },
-        });
+
+        case 'priority': {
+          // Set the agent's priority level, which controls the cycle interval.
+          // 'critical' = 1s, 'high' = 5s, 'normal' = 60s, 'low' = 300s.
+          const level = d.priority ?? 'normal';
+          if (!VALID_PRIORITIES.includes(level)) {
+            emit('owner-directive-rejected', `priority requires valid level (got "${level}")`, {
+              payload: { kind: d.kind, priority: level, valid: VALID_PRIORITIES },
+            });
+            break;
+          }
+          this.priorityLevel = level;
+          this.cycleIntervalOverride = null; // reset any explicit override
+          emit('owner-directive-applied', `priority set to "${level}"`, {
+            payload: { kind: d.kind, priority: level },
+          });
+          // Reschedule the next cycle with the new interval (only if running).
+          if (this.timer && !this.isHalted && !this.riemannProven) {
+            this.scheduleCycle(this.effectiveCycleInterval());
+          }
+          break;
+        }
+
+        case 'shutdown':
+          await this.stop();
+          emit('owner-directive-applied', 'agent SHUTDOWN by owner', { payload: { kind: d.kind } });
+          break;
+
+        default:
+          emit('owner-directive-rejected', `unknown directive kind: ${d.kind}`, {
+            payload: { kind: d.kind },
+          });
+      }
+
+      // Mark the directive as applied in the DB (best-effort).
+      await db.ownerDirective.updateMany({
+        where: { kind: d.kind, status: 'queued' },
+        data: { status: 'applied', appliedAt: new Date() },
+      }).catch(() => { /* best-effort */ });
+    } catch (e: any) {
+      emit('owner-directive-rejected', `directive ${d.kind} threw: ${e?.message ?? e}`, {
+        payload: { kind: d.kind, error: e?.message ?? String(e) },
+        level: 'error',
+      });
+      await db.ownerDirective.updateMany({
+        where: { kind: d.kind, status: 'queued' },
+        data: { status: 'rejected', appliedAt: new Date(), note: e?.message ?? String(e) },
+      }).catch(() => { /* best-effort */ });
     }
   }
 
@@ -503,6 +695,8 @@ class Orchestrator {
       riemannProvenAt: state?.riemannProvenAt?.toISOString() ?? null,
       currentCycleId: this.currentCycleId || state?.currentCycleId || null,
       currentPhase: this.currentPhase,
+      forcedPhase: this.forcedPhase,
+      priorityLevel: this.priorityLevel,
       totalCycles: cycles,
       totalHypotheses: hyps,
       totalTheorems: thms,
@@ -512,6 +706,42 @@ class Orchestrator {
       lastEvent: last,
       uptimeMs: Date.now() - this.startedAt,
     };
+  }
+
+  /**
+   * Recent cycle history with LLM provider/model info. Used by the dashboard
+   * to show which provider served each cycle.
+   */
+  async listRecentCycles(limit = 25): Promise<Array<{
+    id: number;
+    startedAt: Date;
+    endedAt: Date | null;
+    phase: string;
+    status: string;
+    llmCalls: number;
+    llmProvider: string | null;
+    llmModel: string | null;
+    llmTokensIn: number;
+    llmTokensOut: number;
+    error: string | null;
+  }>> {
+    const rows = await db.agentCycle.findMany({
+      orderBy: [{ id: 'desc' }],
+      take: limit,
+    });
+    return rows.map((c) => ({
+      id: c.id,
+      startedAt: c.startedAt,
+      endedAt: c.endedAt,
+      phase: c.phase,
+      status: c.status,
+      llmCalls: c.llmCalls,
+      llmProvider: c.llmProvider,
+      llmModel: c.llmModel,
+      llmTokensIn: c.llmTokensIn,
+      llmTokensOut: c.llmTokensOut,
+      error: c.error,
+    }));
   }
 }
 

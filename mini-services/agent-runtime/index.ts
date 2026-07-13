@@ -25,7 +25,6 @@ process.on('SIGINT', () => console.error('[agent-runtime] SIGINT'));
 
 import { createServer } from 'http';
 import { Server } from 'socket.io';
-import { db } from '../../src/lib/db';
 import orchestrator from '../../src/lib/agent/orchestrator';
 import { recentEvents, emit } from '../../src/lib/agent/logger';
 import { listHypotheses } from '../../src/lib/agent/hypothesis-generator';
@@ -71,19 +70,34 @@ io.on('connection', (socket) => {
   });
 
   socket.on('get-research', async () => {
-    const [hyps, thms, rhs, arxiv, nodes, edges] = await Promise.all([
+    const [hyps, thms, rhs, arxiv, nodes, edges, cycles] = await Promise.all([
       listHypotheses(100),
       listTheorems(100),
       listRiemannAttempts(100),
       listCachedPapers(100),
       listNodes(100),
       listEdges(200),
+      orchestrator.listRecentCycles(50),
     ]);
-    socket.emit('research', { hypotheses: hyps, theorems: thms, riemann: rhs, arxiv, kg: { nodes, edges } });
+    socket.emit('research', {
+      hypotheses: hyps,
+      theorems: thms,
+      riemann: rhs,
+      arxiv,
+      kg: { nodes, edges },
+      cycles,
+    });
   });
 
   socket.on('get-llm-providers', () => {
     socket.emit('llm-providers', llmRouter.listProviders());
+  });
+
+  // Dedicated event for fetching only recent cycles (lighter than get-research
+  // when the dashboard just wants to refresh the history table).
+  socket.on('get-cycles', async () => {
+    const cycles = await orchestrator.listRecentCycles(50);
+    socket.emit('cycles', cycles);
   });
 
   socket.on('directive', async (d: OwnerDirectivePayload) => {
@@ -125,7 +139,7 @@ setInterval(async () => {
   try {
     const s = await orchestrator.snapshot();
     io.emit('snapshot', s);
-  } catch (e: any) {
+  } catch {
     // ignore
   }
 }, 5000);

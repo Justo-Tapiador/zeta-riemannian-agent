@@ -175,6 +175,16 @@ model AgentCycle {
   documentsProduced Int    @default(0)
   status          String   @default("running") // running | ok | error
   error           String?
+  // LLM provider/model that served the calls in this cycle. Updated as the
+  // cycle progresses (the last provider that responded wins; if a cycle
+  // makes multiple calls served by different providers due to failover,
+  // the most recent one is recorded here). 'zai' / 'groq' / 'none' (stub).
+  llmProvider     String?  // zai | groq | none | null (no LLM call made)
+  llmModel        String?  // glm-4.6 | llama-3.3-70b-versatile | stub | null
+  llmTokensIn     Int      @default(0)
+  llmTokensOut    Int      @default(0)
+
+  @@index([llmProvider])
 }
 
 /// An owner directive (human guidance) injected into the agent.

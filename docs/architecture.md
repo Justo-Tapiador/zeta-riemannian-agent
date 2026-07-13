@@ -12,12 +12,12 @@ zRiemannian consists of two cooperating processes:
 
 | Process | Port | Responsibility |
 |---------|------|----------------|
-| **Next.js dev server** | 3000 | Web dashboard (UI + read-only file API) |
+| **Native Node.js web server** | 3000 | Web dashboard (UI + read-only file API + in-process agent) |
 | **agent-runtime** (mini-service) | 3003 | WebSocket server + the orchestrator + the AJN cycle loop |
 
 A **Caddy gateway** on port 81 routes:
 - requests with `?XTransformPort=3003` → port 3003 (the agent runtime)
-- everything else → port 3000 (Next.js)
+- everything else → port 3000 (the Node.js web server)
 
 The dashboard's WebSocket client connects to `/?XTransformPort=3003`,
 which Caddy forwards to the agent runtime. All real-time communication
@@ -99,17 +99,19 @@ agent enters alert-only mode.
 
 The orchestrator's `runCycle()` method is the heart of the agent. It is
 called on startup with zero delay (AJN addiction) and rescheduled every
-`CYCLE_INTERVAL_MS` (default 60 s).
+`CYCLE_INTERVAL_MS` (default 60 s, modulated by the current `priorityLevel`).
 
 ```
 runCycle()
   │
   ├── 1. Apply queued owner directives
   ├── 2. Pick phase based on cycle id:
-  │      cycle % 5 == 0  → riemann-attempt
-  │      cycle % 3 == 0  → arxiv-scan
-  │      cycle % 7 == 0  → archive
-  │      else             → hypothesis-gen (even) | proof-attempt (odd)
+  │      (a) if forcedPhase active → use it, decrement TTL
+  │      (b) else:
+  │           cycle % 5 == 0  → riemann-attempt
+  │           cycle % 3 == 0  → arxiv-scan
+  │           cycle % 7 == 0  → archive
+  │           else             → hypothesis-gen (even) | proof-attempt (odd)
   ├── 3. Create AgentCycle row in DB
   ├── 4. Fire backbone layers L1-L3 (sensory + pattern)
   ├── 5. Execute the phase:
@@ -121,7 +123,7 @@ runCycle()
   │      │                      → if valid & conf ≥ 0.90: SET riemannProven = true
   │      └── archive          → regenerate research/INDEX.md
   ├── 6. Fire backbone layers L4-L14 (symbolic)
-  └── 7. Reschedule next cycle
+  └── 7. Reschedule next cycle at min(CYCLE_INTERVAL_MS, effectiveCycleInterval())
 ```
 
 ### Phase picker rationale
@@ -132,18 +134,55 @@ ensuring every 5th cycle is a `riemann-attempt`. This gives the agent a
 roughly 1:1:1:1 ratio of ArXiv scanning, hypothesis generation, proof
 attempts, and archiving, with a periodic RH probe layered on top.
 
+### Owner overrides
+
+Two owner directives can override the standard phase picker:
+
+- **`force-phase`** — sets `forcedPhase` + `forcedPhaseTtl`. While the
+  TTL is positive, `pickPhase()` returns the forced phase and decrements
+  the TTL. When TTL reaches 0, the override clears and the standard
+  cadence resumes. TTL is clamped to 1..20 cycles.
+- **`priority`** — sets `priorityLevel`, which controls
+  `effectiveCycleInterval()`:
+  - `critical` → 1 s/cycle (interactive debugging, awaiting a Riemann attempt)
+  - `high`     → 5 s/cycle
+  - `normal`   → 60 s/cycle (default)
+  - `low`      → 300 s/cycle (throttle for cost/CPU control)
+
+`scheduleCycle(delayMs)` uses `min(delayMs, effectiveCycleInterval())`,
+so a higher priority always shortens the wait; a lower priority never
+overrides an explicit `rerun-cycle` (delay=0).
+
+### Directive persistence
+
+`enqueueDirective()` writes a row to the `OwnerDirective` table with
+status `queued` immediately on receipt. When `applyDirective()`
+finishes, the row is updated to `applied` (or `rejected` on validation
+failure or exception). This gives a full audit trail of owner actions
+that survives process restarts.
+
 ---
 
 ## 5. The LLM call protocol
 
-Every LLM call goes through `llm-router.call()`, which:
+Every LLM call goes through `llm-router.call()`, which tries each provider
+in the failover chain in order:
 
-1. Logs the call with a sequential id.
-2. Wraps the ZAI `chat.completions.create()` in a `Promise.race` against
-   a 90-second timeout.
-3. On success, returns `{ text, model, provider, tokensIn, tokensOut, durationMs }`.
-4. On error or timeout, falls back to a deterministic stub (clearly
-   tagged so the UI shows degraded mode).
+1. **Primary: ZAI / GLM-4.6** — wraps `this.zai.chat.completions.create()`
+   in a `Promise.race` against a 90-second timeout. Available via
+   `.z-ai-config`, `ZAI_API_KEY` env, or auto-available in the sandbox.
+2. **Fallback: Groq / Llama 3.3 70B Versatile** — only if ZAI errored or
+   timed out AND `GROQ_API_KEY` is set. Calls Groq's OpenAI-compatible
+   endpoint (`https://api.groq.com/openai/v1/chat/completions`) with the
+   same `Promise.race` timeout pattern. Model can be overridden with
+   `GROQ_MODEL`.
+3. **Last resort: deterministic stub** — if both ZAI and Groq are
+   unavailable, returns a clearly-tagged stub so the agent keeps running
+   (UI shows degraded mode).
+
+Each provider logs a sequential call id, returns
+`{ text, model, provider, tokensIn, tokensOut, durationMs }`, and
+accumulates token usage in `this.tokensUsed` for the dashboard stats.
 
 The caller (e.g. `hypothesis-generator`) then parses the response with
 `safeJsonParse()`, which:
@@ -223,7 +262,7 @@ The `document-archivist.ts` module is responsible for all file I/O. It:
 1. Resolves the project root by walking up from `__dirname` until it
    finds a directory with both `package.json` and `prisma/`. This makes
    the archive location independent of which process imports the module
-   (Next.js dev server vs. agent-runtime vs. CLI).
+   (the Node.js web server vs. agent-runtime vs. CLI).
 2. Maintains 5 subdirectories under `research/`:
    `hypotheses/`, `proofs/`, `theorems/`, `arxiv-cache/`, `riemann-attempts/`.
 3. Generates short codes in the format `<PREFIX>-YYYY-NNNN` (e.g.
@@ -266,8 +305,8 @@ generation toward RH-related concepts.
 
 | Failure | Behaviour |
 |---------|-----------|
-| ZAI SDK init fails | Router logs a warning; all calls fall back to deterministic stubs. Agent continues running. |
-| LLM call times out (>90s) | Router catches the timeout, falls back to stub. Agent continues. |
+| ZAI SDK init fails | Router logs a warning; calls fall back to Groq (if `GROQ_API_KEY` set) or deterministic stub. Agent continues running. |
+| LLM call times out (>90s) | Router catches the timeout, falls back to Groq (if `GROQ_API_KEY` set) or stub. Agent continues. |
 | LLM returns unparseable JSON | `safeJsonParse` tries raw parse, then LaTeX-repaired parse. If both fail, the caller uses a fallback draft (clearly tagged). |
 | `tectonic` not installed | `compileTex` returns `{ ok: false }`. The `.tex` file is still written; only the `.pdf` is missing. |
 | ArXiv API returns error | `searchArxiv` returns `[]`. The cycle continues with no new preprints. |

@@ -172,6 +172,14 @@
     socket.on('directive-accepted', function (d) {
       showToast('Directive accepted', 'Kind: ' + d.kind);
     });
+
+    // PATCH: surface directive rejections so the user knows immediately
+    // when a button click failed. Without this, an unknown kind or a
+    // thrown error in the orchestrator would silently disappear.
+    socket.on('directive-rejected', function (r) {
+      showToast('Directive REJECTED', 'kind=' + r.kind + ' · ' + (r.reason || 'no reason'));
+      console.warn('[zRiemannian] directive rejected:', r);
+    });
   }
 
   // -------- Rendering --------

@@ -2,7 +2,7 @@
 <p align="center">
   <img src="https://unpkg.com/zeta-riemannian-agent@latest/docs/zr-3.jpg" alt="zRiemannian-agent" width="640" />
 </p>
-# THE ZETA-RIEMANNIAN AGENT (:zRiemannian) v1.0.5
+# THE ZETA-RIEMANNIAN AGENT (:zRiemannian) v1.0.7
 
 **An Autonomous Mathematical Research Agent for the Riemann Hypothesis**
 
@@ -14,7 +14,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18-green.svg)](https://nodejs.org)
 [![Bun](https://img.shields.io/badge/bun-%3E%3D1.0-orange.svg)](https://bun.sh)
-[![Version](https://img.shields.io/badge/version-1.0.5-blue.svg)](#)
+[![Version](https://img.shields.io/badge/version-1.0.7-blue.svg)](#)
 
 ---
 
@@ -813,7 +813,7 @@ fusionary-agent              (nuclear fusion research)
 quantum-spherifier           (quantum computing research)
         │
         ▼
-zeta-riemannian-agent v1.0.5   (this project — Riemann Hypothesis research)
+zeta-riemannian-agent v1.0.7   (this project — Riemann Hypothesis research)
 ```
 
 Each descendant inherits the AJN backbone, the multi-LLM router pattern,

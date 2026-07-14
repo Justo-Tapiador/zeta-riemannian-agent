@@ -37,7 +37,7 @@ function findProjectRoot() {
 
 const PROJECT_ROOT = findProjectRoot();
 const WEB_PUBLIC = path.join(__dirname, 'public');
-const RESEARCH_ROOT = path.join(PROJECT_ROOT, 'research');
+const RESEARCH_ROOT =  path.join(PROJECT_ROOT, 'research');
 
 console.log('[zRiemannian web/server.js] project root:', PROJECT_ROOT);
 console.log('[zRiemannian web/server.js] serving static from:', WEB_PUBLIC);
@@ -102,8 +102,8 @@ const MIME_TYPES = {
   '.eot': 'application/vnd.ms-fontobject',
   '.map': 'application/json',
   '.txt': 'text/plain; charset=utf-8',
-  '.md': 'text/markdown; charset=utf-8',
-  '.tex': 'application/x-tex',
+  '.md':  'text/markdown; charset=utf-8',
+  '.tex': 'text/plain; charset=utf-8',
   '.pdf': 'application/pdf',
 };
 
@@ -125,35 +125,60 @@ const httpServer = http.createServer(async (req, res) => {
   }
 
   // --- API: /api/research/file?path=... ---
-  if (pathname === '/api/research/file') {
-    const relPath = parsed.query.path;
-    if (!relPath || typeof relPath !== 'string') {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'missing path' }));
-      return;
-    }
-    const abs = path.resolve(RESEARCH_ROOT, relPath);
-    if (!abs.startsWith(RESEARCH_ROOT + path.sep) && abs !== RESEARCH_ROOT) {
-      res.writeHead(403, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'forbidden' }));
-      return;
-    }
-    if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
-      res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'not found' }));
-      return;
-    }
-    const ext = path.extname(abs).toLowerCase();
-    const contentType = MIME_TYPES[ext] || 'application/octet-stream';
-    const stream = createReadStream(abs);
-    res.writeHead(200, {
-      'Content-Type': contentType,
-      'Content-Disposition': `inline; filename="${path.basename(abs)}"`,
-      'Cache-Control': 'no-store',
-    });
-    stream.pipe(res);
+if (pathname === '/api/research/file') {
+  const relPath = parsed.query.path;
+  if (!relPath || typeof relPath !== 'string') {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'missing path' }));
     return;
   }
+
+  // Normalize: if relPath already includes the leading 'research/' (which
+  // is what the DB columns like proofTexPath store), strip it so we don't
+  // double-prefix when resolving against RESEARCH_ROOT (which already ends
+  // with /research). Without this, path.resolve(RESEARCH_ROOT, 'research/foo.tex')
+  // produces <PROJECT_ROOT>/research/research/foo.tex and the file is not found.
+  // Accept both forward slashes (URLs, Linux) and backslashes (Windows, DB).
+  const normalizedRelPath = relPath.replace(/^(research[\/\\])+/i, '');
+
+  const abs = path.resolve(RESEARCH_ROOT, normalizedRelPath);
+
+  // Security: ensure the resolved path is still inside RESEARCH_ROOT.
+  // This blocks path traversal attempts like ?path=../package.json or
+  // ?path=/etc/passwd. NOTE: this check requires RESEARCH_ROOT to be
+  // path.join(PROJECT_ROOT, 'research'), NOT just PROJECT_ROOT — otherwise
+  // any file in the project becomes servable (.env, dev.db, source code).
+  if (!abs.startsWith(RESEARCH_ROOT + path.sep) && abs !== RESEARCH_ROOT) {
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'forbidden' }));
+    return;
+  }
+
+  if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'not found', path: normalizedRelPath }));
+    return;
+  }
+
+  const ext = path.extname(abs).toLowerCase();
+  const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+
+  // Content-Disposition: inline forces the browser to display the file
+  // inline (in a new tab) instead of downloading it. This works for any
+  // MIME type the browser can render: text/*, application/pdf, image/*.
+  // For unknown types (e.g. application/octet-stream), the browser will
+  // still fall back to downloading — that's why we set .tex to text/plain.
+  const basename = path.basename(abs);
+  const stream = createReadStream(abs);
+  res.writeHead(200, {
+    'Content-Type': contentType,
+    'Content-Disposition': `inline; filename="${basename}"`,
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',  // prevent MIME sniffing attacks
+  });
+  stream.pipe(res);
+  return;
+}
 
   // --- API: /api/snapshot ---
   if (pathname === '/api/snapshot' && orchestrator) {

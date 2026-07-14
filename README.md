@@ -37,6 +37,7 @@
   - [Autonomous Research](#autonomous-research)
   - [Web Dashboard](#web-dashboard)
   - [Owner Directives](#owner-directives)
+  - [Inspecting the database with Prisma Studio](#inspecting-the-database-with-prisma-studio)
 - [Configuration](#configuration)
 - [Project Structure](#project-structure)
 - [Lineage & Credits](#lineage--credits)
@@ -665,6 +666,51 @@ full-width, pulsing red bar that appears at the top of every page when
 See [Owner Guidance](#owner-guidance) above. Directives are sent via
 WebSocket from the **Guidance** tab and queued for application at the
 start of the next cycle.
+
+### Inspecting the database with Prisma Studio
+
+The agent persists all of its state — hypotheses, proof attempts, theorems,
+Riemann attempts, the agent-cycle history, knowledge-graph nodes/edges, and
+the `AgentState` row (which holds `isHalted`, `riemannProven`, counters, and
+the current focus topic) — in a local SQLite database (by default at
+`prisma/db/custom.db`). The fastest way to inspect or hand-edit that data is
+**Prisma Studio**, a small web UI that ships with Prisma and reads your
+`schema.prisma` directly. No extra install is required — `prisma` is already
+a project dependency.
+
+Run it from the project root with:
+
+```bash
+npx prisma studio
+```
+
+This starts a local web server on http://localhost:5555 and opens it in your
+default browser. You will see every table listed in the left sidebar
+(`AgentCycle`, `AgentState`, `ArxivPaper`, `Hypothesis`, `KGEdge`, `KGNode`,
+`OwnerDirective`, `ProofAttempt`, `RiemannAttempt`, `Theorem`). Click any
+table to browse its rows in a spreadsheet-like view. From there you can:
+
+- **Filter and sort** by any column (e.g. show only `Hypothesis` rows with
+  `status = 'open'`, or sort `AgentCycle` by `startedAt` descending).
+- **Edit any field inline** — click a cell, change the value, press Enter.
+  This is the quickest way to flip `AgentState.isHalted` from `true` to
+  `false` if the agent ever gets stuck in halt mode, or to fix a malformed
+  `texPath` field.
+- **Add or delete rows** with the buttons at the top of the table view.
+- **Export** the current view as CSV (useful for sharing a snapshot of the
+  agent's research output).
+
+Prisma Studio reads and writes through the same Prisma client the agent
+uses, so any change you make takes effect immediately on the next cycle.
+Be careful editing `AgentState` while the agent is running — the agent
+re-reads `isHalted` and `focusTopic` from that row on every cycle, so
+toggling `isHalted` to `true` here is equivalent to pressing the Halt
+button in the web UI (and conversely, setting it to `false` resumes the
+agent within ~1s).
+
+To stop Prisma Studio, press `Ctrl+C` in the terminal where you launched
+it. The agent itself is unaffected — Studio runs as a separate process.
+
 
 ---
 

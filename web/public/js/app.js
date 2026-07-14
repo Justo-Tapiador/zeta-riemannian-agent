@@ -319,7 +319,7 @@
     html += '</tbody></table>';
     wrap.innerHTML = html;
   }
-
+/*
   function renderHypotheses() {
     var list = $('hypotheses-list');
     $('hypotheses-count').textContent = research.hypotheses.length;
@@ -355,7 +355,60 @@
     });
     list.innerHTML = html;
   }
+*/
+function renderHypotheses() {
+  var list = $('hypotheses-list');
+  $('hypotheses-count').textContent = research.hypotheses.length;
+  if (research.hypotheses.length === 0) {
+    list.innerHTML = '<p class="empty-state">No hypotheses yet. The agent will produce them every other cycle.</p>';
+    return;
+  }
+  var html = '';
+  research.hypotheses.forEach(function (h) {
+    var concepts = safeJsonArray(h.relatedConcepts);
+    var arxivs = safeJsonArray(h.relatedArxivIds);
+    var conceptBadges = concepts.map(function (c) {
+      return '<span class="badge kind-concept">' + escapeHtml(c) + '</span>';
+    }).join('');
+    var arxivBadges = arxivs.map(function (a) {
+      return '<span class="badge kind-object">arXiv:' + escapeHtml(a) + '</span>';
+    }).join('');
+    var stmt = (h.statement || '').slice(0, 200);
+    if (h.statement && h.statement.length > 200) stmt += '…';
 
+    // ---- NEW: build .tex / .pdf action buttons ----
+    // Path normalization: strip leading 'research/' if present (DB stores
+    // 'research/hypotheses/H-XXXX.tex') and convert backslashes to forward
+    // slashes so the URL is well-formed on Windows too.
+    function normalizePath(p) {
+      return String(p).replace(/\\/g, '/').replace(/^\/+/, '').replace(/^research\//i, '');
+    }
+    var actions = '';
+    if (h.texPath) {
+      actions += '<a href="/api/research/file?path=' + encodeURIComponent(normalizePath(h.texPath)) + '" target="_blank"><button class="ghost sm">.tex</button></a>';
+    }
+    if (h.pdfPath) {
+      actions += '<a href="/api/research/file?path=' + encodeURIComponent(normalizePath(h.pdfPath)) + '" target="_blank"><button class="ghost sm">.pdf</button></a>';
+    }
+    // ----------------------------------------------
+
+    html += '<div class="item-card">' +
+      '<div class="item-header">' +
+        '<span class="badge status-' + h.status + '">' + h.shortCode + '</span>' +
+        '<div class="item-title">' + escapeHtml(h.title) + '</div>' +
+      '</div>' +
+      '<div class="item-meta">conf=' + (h.confidence || 0).toFixed(2) + ' · ' + (h._count ? h._count.attempts : 0) + ' attempts · ' + new Date(h.createdAt).toLocaleString() + '</div>' +
+      '<div class="item-statement">' + escapeHtml(stmt) + '</div>' +
+      '<div class="item-tags">' + conceptBadges + arxivBadges + '</div>' +
+      (actions ? '<div class="item-actions" style="margin-top:8px;">' + actions + '</div>' : '') +
+      '<details><summary>Show motivation & strategy</summary>' +
+        '<p><strong>Motivation:</strong> ' + escapeHtml(h.motivation || '') + '</p>' +
+        '<p><strong>Strategy:</strong> ' + escapeHtml(h.strategySketch || '') + '</p>' +
+      '</details>' +
+    '</div>';
+  });
+  list.innerHTML = html;
+}
   function renderTheorems() {
     var list = $('theorems-list');
     $('theorems-count').textContent = research.theorems.length;

@@ -135,6 +135,7 @@ Return only the JSON object. No prose, no markdown fences.`;
       relatedArxivIds: JSON.stringify(draft.relatedArxivIds ?? []),
       confidence: draft.confidence ?? 0.5,
       status: 'open',
+      texPath: rel(texAbs),
     },
   });
 

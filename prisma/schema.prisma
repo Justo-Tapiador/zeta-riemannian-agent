@@ -33,7 +33,8 @@ model Hypothesis {
   confidence      Float          @default(0.5)    // 0..1 — LLM self-assessed
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
-
+  texPath         String?  // ← AÑADIR
+  pdfPath         String?  // ← AÑADIR (para cuando tectonic compile hipótesis)
   @@index([status])
   @@index([createdAt])
 }

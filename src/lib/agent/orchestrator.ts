@@ -682,6 +682,7 @@ class Orchestrator {
                 relatedArxivIds: JSON.stringify(d.hypothesisDraft.relatedArxivIds),
                 confidence: d.hypothesisDraft.confidence,
                 status: 'open',
+                texPath: rel(texAbs),
               },
             });
             await db.agentState.update({
